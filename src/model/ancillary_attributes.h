@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+#pragma once
+
+#include <openxisf/error.h>
+#include <openxisf/image.h>
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <string_view>
+
+// The attributes of the elements that describe images (spec §11.6 to §11.11), read from their text, and the rules that
+// relate them. Parsers throw invalid_data_error, whose message has no context; the caller adds it. Names are
+// case-sensitive unless the specification says otherwise.
+
+namespace openxisf::detail {
+
+/// True when name is a FITS keyword name (FITS 4.0 §4.1.2.1) without padding: at most eight characters, each an
+/// upper-case letter, a digit, a hyphen or an underscore. The empty name is the blank keyword.
+[[nodiscard]] bool is_fits_keyword_name(std::string_view name) noexcept;
+
+/// True for the keywords that have no value: COMMENT, HISTORY and the blank keyword (FITS 4.0 §4.4.2.4).
+[[nodiscard]] bool is_commentary_keyword(std::string_view name) noexcept;
+
+/// The gamma of a gamma attribute (spec §11.8.1): a finite floating point value above zero, or nothing for the sRGB
+/// function, whose name is sRGB in any case. Throws with errc::invalid_rgb_working_space.
+[[nodiscard]] std::optional<double> parse_gamma(std::string_view text);
+
+/// The three values of an attribute of the form a:b:c, each a finite floating point value of spec §8.3.3. Throws with
+/// code.
+[[nodiscard]] std::array<double, 3> parse_triplet(std::string_view text, errc code);
+
+/// The four values of an attribute of the form a:b:c:d, like parse_triplet().
+[[nodiscard]] std::array<double, 4> parse_quadruplet(std::string_view text, errc code);
+
+/// The luminance coefficients that the chromaticities x and y of the primaries give relative to the D50 reference white
+/// (spec §8.5.4.1), or nothing when they define no RGB working space: a y coordinate of zero, or a singular system.
+[[nodiscard]] std::optional<std::array<double, 3>> derive_luminance(const std::array<double, 3>& x,
+                                                                    const std::array<double, 3>& y) noexcept;
+
+/// How far stored luminance coefficients may be from the derived ones: values written with four decimals agree, and
+/// the coefficients of another reference white, such as those of sRGB for D65, do not.
+inline constexpr double luminance_tolerance = 1e-4;
+
+/// Checks the rules of spec §8.5.4.1 for an RGB working space read from its attributes: chromaticities and luminance
+/// coefficients in [0, 1], and chromaticities that define a working space. Returns the luminance coefficients that the
+/// chromaticities give, which the stored ones may differ from. Throws with errc::invalid_rgb_working_space.
+[[nodiscard]] std::array<double, 3> check_rgb_working_space(const rgb_working_space& space);
+
+/// Checks the constraints of spec §8.5.6 on the parameters of a display function, for each component: m, s and h in
+/// [0, 1], s at most h, l at most 0 and r at least 1. Throws with errc::invalid_display_function.
+void check_display_function(const display_function& function);
+
+/// The value of a width or height attribute of a ColorFilterArray element: an unsigned integer above zero. Throws with
+/// errc::invalid_color_filter_array.
+[[nodiscard]] std::uint64_t parse_cfa_size(std::string_view text);
+
+/// Checks a colour filter array (spec §11.10.1): a pattern of the characters of Table 18 whose length is width ×
+/// height. Throws with errc::invalid_color_filter_array.
+void check_color_filter_array(const color_filter_array& filter);
+
+/// The value of a horizontal or vertical attribute of a Resolution element: a finite floating point value above zero.
+/// Throws with errc::invalid_resolution.
+[[nodiscard]] double parse_resolution_value(std::string_view text);
+
+/// The unit of a unit attribute of a Resolution element: inch or cm. Throws with errc::invalid_resolution.
+[[nodiscard]] resolution_unit parse_resolution_unit(std::string_view text);
+
+} // namespace openxisf::detail

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Test data must stay byte-exact, including .xish headers.
+*.xisf binary
+*.xisb binary
+*.xish binary
+*.icc binary
+*.bin binary
+fuzz/seeds/** binary

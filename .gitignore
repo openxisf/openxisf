@@ -23,11 +23,6 @@
 *.dll
 *.so.*
 
-
-# Fortran module files
-*.mod
-*.smod
-
 # Compiled Static libraries
 *.lai
 *.la
@@ -43,6 +38,8 @@
 build/
 Build/
 build-*/
+out/
+cmake-build-*/
 
 # CMake generated files
 CMakeFiles/
@@ -51,6 +48,7 @@ cmake_install.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
+CMakeUserPresets.json
 
 # Temporary files
 *.tmp
@@ -67,3 +65,31 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# IDEs
+.vs/
+.idea/
+.vscode/
+*.user
+
+# Coverage and profiling
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+*.gcov
+
+# Generated documentation
+/docs/api/
+
+# Optional large samples, never committed
+/tests/data/large/
+
+# Fuzzing: the local corpus and the artifacts of a failed run
+/fuzz/corpus/
+crash-*
+leak-*
+timeout-*
+
+# Official XISF schema, downloaded by CI and never committed
+/schema/

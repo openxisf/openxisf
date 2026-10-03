@@ -1,0 +1,7 @@
+# The checks of the parent directory, with one disabled on purpose for the benchmarks:
+#   clang-analyzer-cplusplus.NewDeleteLeaks  Google Benchmark 1.8 (Ubuntu 24.04) registers a benchmark by handing a
+#                                            pointer from new to its registry, which the analyzer reports as a leak
+#                                            inside benchmark.h. Version 1.9 hands it a unique_ptr.
+InheritParentConfig: true
+Checks: >
+  -clang-analyzer-cplusplus.NewDeleteLeaks

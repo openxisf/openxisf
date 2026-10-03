@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+version: 2
+updates:
+  # Actions are pinned by commit SHA; Dependabot moves the pin and the version comment together.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly

@@ -1,0 +1,8 @@
+openxisf provides CMake targets:
+
+  find_package(openxisf CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE openxisf::openxisf)
+
+openxisf provides a pkg-config module:
+
+  openxisf

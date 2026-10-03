@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "openxisf",
+  "description": "Development manifest of OpenXISF: the dependencies of a local build",
+  "homepage": "https://github.com/openxisf/openxisf",
+  "license": "Apache-2.0",
+  "builtin-baseline": "3b0aa5ade4cccdbd08bb3fad308328e5a85a9172",
+  "dependencies": [
+    "lz4",
+    "pugixml",
+    "zlib",
+    "zstd"
+  ],
+  "default-features": [
+    "tests"
+  ],
+  "features": {
+    "tbb": {
+      "description": "oneTBB, for OPENXISF_WITH_TBB",
+      "dependencies": [
+        "tbb"
+      ]
+    },
+    "openssl": {
+      "description": "OpenSSL, for OPENXISF_WITH_OPENSSL",
+      "dependencies": [
+        "openssl"
+      ]
+    },
+    "tests": {
+      "description": "GoogleTest, for OPENXISF_BUILD_TESTS",
+      "dependencies": [
+        "gtest"
+      ]
+    },
+    "benchmarks": {
+      "description": "Google Benchmark, for the benchmark harness",
+      "dependencies": [
+        "benchmark"
+      ]
+    }
+  }
+}
