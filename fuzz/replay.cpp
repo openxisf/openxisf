@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+// The main program of a fuzz target built without libFuzzer. It runs the target once on every file given on the command
+// line and on every file of the directories given, so that the committed seeds, which include every input that ever
+// broke a target, run on every platform. A crash or an escaping exception fails the run.
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <system_error>
+#include <vector>
+
+// The name is fixed by libFuzzer.
+// NOLINTNEXTLINE(readability-identifier-naming)
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size);
+
+namespace {
+
+std::vector<std::filesystem::path> list_inputs(int argc, char** argv)
+{
+    std::vector<std::filesystem::path> inputs;
+    for (int i = 1; i < argc; ++i) {
+        const std::filesystem::path argument(argv[i]);
+        if (std::filesystem::is_directory(argument)) {
+            for (const auto& entry : std::filesystem::directory_iterator(argument)) {
+                if (entry.is_regular_file()) {
+                    inputs.push_back(entry.path());
+                }
+            }
+        } else {
+            inputs.push_back(argument);
+        }
+    }
+    std::ranges::sort(inputs);
+    return inputs;
+}
+
+std::vector<std::uint8_t> read_file(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::filesystem::filesystem_error("cannot open the input", path,
+                                                std::make_error_code(std::errc::io_error));
+    }
+    std::vector<std::uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (file.bad()) {
+        throw std::filesystem::filesystem_error("cannot read the input", path,
+                                                std::make_error_code(std::errc::io_error));
+    }
+    return data;
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    try {
+        const std::vector<std::filesystem::path> inputs = list_inputs(argc, argv);
+        // A wrong path must not pass as a run without findings.
+        if (inputs.empty()) {
+            (void)std::fputs("no inputs; give files or directories\n", stderr);
+            return 1;
+        }
+        for (const std::filesystem::path& input : inputs) {
+            const std::vector<std::uint8_t> data = read_file(input);
+            // Printed before the run, so that the input of a crash is the last one named.
+            std::cout << input.filename().string() << '\n';
+            std::cout.flush();
+            (void)LLVMFuzzerTestOneInput(data.data(), data.size());
+        }
+        std::cout << "replayed " << inputs.size() << " inputs\n";
+        return 0;
+    } catch (const std::exception& failure) {
+        // Also an exception that escapes the target, which fails the run as it does under libFuzzer.
+        (void)std::fputs(failure.what(), stderr);
+        (void)std::fputs("\n", stderr);
+        return 1;
+    }
+}

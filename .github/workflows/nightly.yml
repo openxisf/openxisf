@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+name: nightly
+
+# Long jobs and platforms that are too slow for every pull request. They run on a schedule once the
+# repository is public, where Actions minutes are free, and on manual dispatch at any time.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_COLOR_DIAGNOSTICS: "ON"
+  VCPKG_DISABLE_METRICS: "1"
+
+jobs:
+  coverage:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev
+          pip install gcovr
+
+      - name: Build and test with coverage
+        run: |
+          cmake --preset linux-gcc-coverage -DCMAKE_CXX_COMPILER=g++-14
+          cmake --build --preset linux-gcc-coverage
+          ctest --preset linux-gcc-coverage
+
+      # The data files come from g++-14, so the gcov must be its own: the default one is older and rejects them.
+      - name: Report
+        run: |
+          mkdir -p out/coverage
+          gcovr --root . --gcov-executable gcov-14 --object-directory out/build/linux-gcc-coverage \
+            --exclude-directories 'out/build/[^/]+/CMakeFiles' --filter 'src/' --filter 'include/' \
+            --print-summary --html-details out/coverage/index.html
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: out/coverage
+          if-no-files-found: error
+
+  # An hour per fuzz target, from its committed seeds. Findings are uploaded; each one becomes a committed seed once it
+  # is fixed.
+  fuzz:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev
+
+      # The randomized address space of the 24.04 kernel is larger than Clang 18's sanitizers support.
+      - name: Lower the address-space randomization
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Build
+        run: |
+          cmake --preset linux-clang-fuzz -DCMAKE_CXX_COMPILER=clang++-18 -DOPENXISF_FUZZ_SECONDS=3600
+          cmake --build --preset linux-clang-fuzz
+
+      - name: Fuzz
+        run: ctest --preset linux-clang-fuzz --parallel "$(nproc)"
+
+      # ctest keeps the output of the tests that passed in its log, where each run states the edges it covered.
+      - name: Coverage
+        if: ${{ !cancelled() }}
+        run: sed -n 's/^-- \(fuzz_.* covered .*\)$/::notice::\1/p' out/build/linux-clang-fuzz/Testing/Temporary/LastTest.log
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: out/build/linux-clang-fuzz/fuzz/artifacts
+          if-no-files-found: ignore
+
+  # The code is endian-correct by design. Big-endian hosts are not supported, but they must keep working.
+  s390x:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: s390x
+
+      - name: Build and test under emulation
+        run: |
+          docker run --rm --platform linux/s390x --volume "$PWD:/src" --workdir /src ubuntu:24.04 bash -eu -c '
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates cmake ninja-build g++ pkg-config \
+              libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev
+            cmake --preset linux-gcc-release -DOPENXISF_WARNINGS_AS_ERRORS=ON
+            cmake --build --preset linux-gcc-release
+            ctest --preset linux-gcc-release'
+
+  # The newest versions of the dependencies, to see breakage before the baseline moves.
+  latest-dependencies:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Move the vcpkg baseline to the newest commit
+        run: |
+          newest=$(git ls-remote https://github.com/microsoft/vcpkg.git refs/heads/master | cut -f1)
+          jq --arg commit "$newest" '."builtin-baseline" = $commit' vcpkg.json > vcpkg.json.new
+          mv vcpkg.json.new vcpkg.json
+          echo "baseline: $newest"
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          cache-key: latest-dependencies
+          triplet: x64-linux
+
+      - name: Build and test
+        run: |
+          cmake --preset linux-gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DOPENXISF_WARNINGS_AS_ERRORS=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-linux
+          cmake --build --preset linux-gcc-release
+          ctest --preset linux-gcc-release

@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+
+// The platform layer of file_source and file_sink: native_file_win32.cpp or native_file_posix.cpp. Paths are UTF-8 and
+// valid, which the public classes check. Every failure is an io_error whose message names the file.
+
+namespace openxisf::detail {
+
+/// A file of the operating system, closed on destruction. Reads and writes take explicit offsets, so that any number
+/// of threads can read one file at once.
+class native_file
+{
+public:
+#if defined(_WIN32)
+    using handle_type = void*;
+    static constexpr handle_type closed_handle = nullptr;
+#else
+    using handle_type = int;
+    static constexpr handle_type closed_handle = -1;
+#endif
+
+    /// Opens a regular file for reading. Throws io_error with errc::open_failed or errc::not_a_regular_file.
+    [[nodiscard]] static native_file open_for_reading(const std::string& path);
+
+    /// Creates a file for writing, or returns nothing when something exists at path already. name is the path of the
+    /// file it becomes, which error messages use. Throws io_error with errc::open_failed.
+    [[nodiscard]] static std::optional<native_file> create_new(const std::string& path, std::string name);
+
+    native_file(native_file&& other) noexcept
+        : handle_(std::exchange(other.handle_, closed_handle)), name_(std::move(other.name_))
+    {}
+
+    native_file& operator=(native_file&& other) noexcept
+    {
+        if (this != &other) {
+            reset();
+            handle_ = std::exchange(other.handle_, closed_handle);
+            name_ = std::move(other.name_);
+        }
+        return *this;
+    }
+
+    native_file(const native_file&) = delete;
+    native_file& operator=(const native_file&) = delete;
+
+    ~native_file()
+    {
+        reset();
+    }
+
+    /// The path, or the name given to create_new().
+    [[nodiscard]] const std::string& name() const noexcept
+    {
+        return name_;
+    }
+
+    [[nodiscard]] std::uint64_t size() const;
+
+    /// Fills destination with the bytes at offset. A file that ends first is an io_error with errc::end_of_data.
+    void read_at(std::uint64_t offset, std::span<std::byte> destination) const;
+
+    void write_at(std::uint64_t offset, std::span<const std::byte> data) const;
+
+    /// Closes the file, which create_new() made at path, and moves it over target, which it replaces atomically, also
+    /// while other programs read target. With flush_to_disk, the content and the rename reach the storage device
+    /// before it returns. Throws io_error with errc::write_failed. The file is then either still at path, to be
+    /// discarded, or already in place of the target.
+    void commit(const std::string& path, const std::string& target, bool flush_to_disk);
+
+    /// Closes the file, which create_new() made at path, and removes it, unless commit() moved it to its target.
+    void discard(const std::string& path) noexcept;
+
+    /// Closes the file, ignoring failures.
+    void reset() noexcept;
+
+private:
+    native_file(handle_type handle, std::string name) noexcept : handle_(handle), name_(std::move(name)) {}
+
+    void flush_to_disk() const;
+    // Closes the file and reports a failure, which may be a delayed write error.
+    void close();
+
+    handle_type handle_;
+    std::string name_;
+};
+
+} // namespace openxisf::detail

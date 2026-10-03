@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+#include "support/temp_directory.h"
+
+#include "core/xoshiro.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+#include <cstdint>
+#include <cstdio>
+#include <exception>
+#include <stdexcept>
+#include <system_error>
+
+namespace openxisf::test {
+
+std::string utf8(const std::filesystem::path& path)
+{
+    const std::u8string text = path.u8string();
+    return {reinterpret_cast<const char*>(text.data()), text.size()};
+}
+
+std::filesystem::path path_of(std::string_view text)
+{
+    std::u8string converted;
+    converted.reserve(text.size());
+    for (const char c : text) {
+        converted += static_cast<char8_t>(c);
+    }
+    return converted;
+}
+
+std::filesystem::path long_form(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    std::filesystem::path preferred = path;
+    preferred.make_preferred();
+    return {LR"(\\?\)" + preferred.native()};
+#else
+    return path;
+#endif
+}
+
+namespace {
+
+#if defined(_WIN32)
+// Removes a directory and its content, one entry at a time. std::filesystem::remove_all() cannot be used on paths
+// beyond 260 characters with every standard library: the libstdc++ of MinGW lists the wrong directory for a \\?\ path
+// and never returns. The functions of the system take such paths as they are. Links are removed, not followed.
+bool remove_tree(const std::wstring& path)
+{
+    WIN32_FIND_DATAW entry{};
+    HANDLE search = FindFirstFileW((path + LR"(\*)").c_str(), &entry);
+    bool removed = true;
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            const std::wstring name = entry.cFileName;
+            if (name == L"." || name == L"..") {
+                continue;
+            }
+            const std::wstring child = path + LR"(\)" + name;
+            const DWORD attributes = entry.dwFileAttributes;
+            if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+                removed = remove_tree(child) && removed;
+            } else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                removed = RemoveDirectoryW(child.c_str()) != FALSE && removed;
+            } else {
+                removed = DeleteFileW(child.c_str()) != FALSE && removed;
+            }
+        } while (FindNextFileW(search, &entry) != FALSE);
+        (void)FindClose(search);
+    }
+    return RemoveDirectoryW(path.c_str()) != FALSE && removed;
+}
+#endif
+
+bool remove_tree(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    return remove_tree(long_form(path).native());
+#else
+    std::error_code error;
+    std::filesystem::remove_all(path, error);
+    return !error;
+#endif
+}
+
+} // namespace
+
+temp_directory::temp_directory()
+{
+    detail::xoshiro256starstar random = detail::xoshiro256starstar::from_random_device();
+    const std::filesystem::path base = std::filesystem::temp_directory_path();
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        std::filesystem::path candidate = base / ("openxisf-test-" + std::to_string(random()));
+        if (std::filesystem::create_directory(candidate)) {
+            path_ = std::filesystem::absolute(candidate);
+            return;
+        }
+    }
+    throw std::runtime_error("cannot create a temporary directory in " + utf8(base));
+}
+
+temp_directory::~temp_directory()
+{
+    bool removed = false;
+    try {
+        removed = remove_tree(path_);
+    } catch (const std::exception&) {
+        removed = false;
+    }
+    if (!removed) {
+        (void)std::fputs("a test could not remove its temporary directory\n", stderr);
+    }
+}
+
+std::string temp_directory::file(std::string_view name) const
+{
+    return utf8(path_ / path_of(name));
+}
+
+} // namespace openxisf::test

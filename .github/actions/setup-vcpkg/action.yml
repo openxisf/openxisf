@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+name: Set up vcpkg
+description: >-
+  Puts vcpkg at the baseline pinned in vcpkg.json, restores the binary cache, installs the dependencies and saves
+  the cache as soon as they are built, so a later failure in the job does not throw the build away.
+
+inputs:
+  cache-key:
+    description: Identifies the binary cache, usually the triplet and the toolchain.
+    required: true
+  triplet:
+    description: >-
+      Triplet to install the dependencies for. Without it nothing is installed here, and the cache is only
+      restored.
+    default: ""
+  packages:
+    description: >-
+      Ports to install by name, separated by spaces. Without them the manifest of the repository is installed.
+    default: ""
+  overlay-triplets:
+    description: Directory with custom triplets, relative to the repository.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check out vcpkg at the baseline
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+
+        # The preinstalled copy saves cloning the whole repository; a fresh clone covers images without one.
+        $root = $env:VCPKG_INSTALLATION_ROOT
+        if (-not $root -or -not (Test-Path (Join-Path $root '.git'))) {
+          $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg.git $root
+        }
+        git -C $root fetch --quiet origin $baseline
+        git -C $root checkout --quiet --force $baseline
+
+        if ($IsWindows) { & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics }
+        else { & (Join-Path $root 'bootstrap-vcpkg.sh') -disableMetrics }
+
+        $cache = Join-Path $env:GITHUB_WORKSPACE '.vcpkg-binary-cache'
+        New-Item -ItemType Directory -Force $cache | Out-Null
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        "VCPKG_DISABLE_METRICS=1" >> $env:GITHUB_ENV
+        "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
+
+    # vcpkg identifies a built package by a hash of its inputs, so a cache restored from an older run is still
+    # right for everything that did not change. The key is unique per run: a cache entry cannot be replaced,
+    # and this one is saved only when new packages were built. Restoring takes the newest earlier entry.
+    - name: Restore the binary cache
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.vcpkg-binary-cache
+        key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key }}-
+
+    - name: Count the cached packages
+      id: before
+      shell: pwsh
+      run: |
+        $cache = Join-Path $env:GITHUB_WORKSPACE '.vcpkg-binary-cache'
+        "count=$(@(Get-ChildItem $cache -Recurse -File).Count)" >> $env:GITHUB_OUTPUT
+
+    - name: Install the dependencies
+      if: ${{ inputs.triplet != '' }}
+      shell: pwsh
+      env:
+        TRIPLET: ${{ inputs.triplet }}
+        PACKAGES: ${{ inputs.packages }}
+        OVERLAY_TRIPLETS: ${{ inputs.overlay-triplets }}
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        $vcpkg = Join-Path $env:VCPKG_ROOT ($IsWindows ? 'vcpkg.exe' : 'vcpkg')
+
+        $arguments = @('install')
+        if ($env:PACKAGES) {
+          # By name, from a directory without a vcpkg.json: next to the manifest of the repository, vcpkg
+          # works in manifest mode and refuses package names.
+          $arguments += $env:PACKAGES -split '\s+'
+          Set-Location $env:RUNNER_TEMP
+        }
+        $arguments += '--triplet', $env:TRIPLET
+        if ($env:OVERLAY_TRIPLETS) {
+          $arguments += "--overlay-triplets=$(Join-Path $env:GITHUB_WORKSPACE $env:OVERLAY_TRIPLETS)"
+        }
+        & $vcpkg @arguments
+
+    # Runs after a failed install as well: packages that finished before the failure are worth keeping.
+    - name: Check whether packages were built
+      id: after
+      if: ${{ !cancelled() }}
+      shell: pwsh
+      env:
+        BEFORE: ${{ steps.before.outputs.count }}
+      run: |
+        $cache = Join-Path $env:GITHUB_WORKSPACE '.vcpkg-binary-cache'
+        $count = @(Get-ChildItem $cache -Recurse -File).Count
+        "changed=$($count -gt [int]$env:BEFORE ? 'true' : 'false')" >> $env:GITHUB_OUTPUT
+        Write-Host "binary cache: $env:BEFORE packages restored, $count now"
+
+    - name: Save the binary cache
+      if: ${{ !cancelled() && steps.after.outputs.changed == 'true' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.vcpkg-binary-cache
+        key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key }}-${{ github.run_id }}-${{ github.run_attempt }}

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+
+prefix=${pcfiledir}/@OPENXISF_PC_PREFIX_RELPATH@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: openxisf
+Description: @PROJECT_DESCRIPTION@
+URL: @PROJECT_HOMEPAGE_URL@
+Version: @PROJECT_VERSION@
+@OPENXISF_PC_REQUIRES_PRIVATE@
+Libs: -L${libdir} -lopenxisf
+Cflags: -I${includedir}@OPENXISF_PC_CFLAGS@

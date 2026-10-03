@@ -1,0 +1,2 @@
+
+  <xisf version="1.0" xmlns="http://www.pixinsight.com/xisf" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.pixinsight.com/xisf http://pixinsight.com/xisf/xisf-1.0.xsd"><Metadata><Property id="XISF:CreationTime" type="TimePoint" value="2026-10-02T12:00:00Z"/><Property id="XISF:CreatorApplication" type="String">OpenXISF tests 1.0</Property></Metadata></xisf>
