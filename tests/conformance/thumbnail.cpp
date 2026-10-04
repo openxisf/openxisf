@@ -23,6 +23,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -40,13 +41,14 @@ using openxisf::test::single_diagnostic;
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return openxisf::test::open_header(header_xml(body), options);
+    return openxisf::test::open_header(header_xml(body), std::move(options));
 }
 
 reader open_attached(std::string_view body, const std::vector<std::vector<std::byte>>& blocks,
                      openxisf::read_options options = {})
 {
-    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks), options);
+    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks),
+                                     std::move(options));
 }
 
 // A thumbnail element with the given attributes and pixel data as hexadecimal digits, in an image.
@@ -55,7 +57,7 @@ reader open_thumbnail(std::string_view attributes, std::string_view hex, openxis
     return open_body(image_xml({}, "<Thumbnail " + std::string(attributes) +
                                        R"( location="embedded"><Data encoding="hex">)" + std::string(hex) +
                                        "</Data></Thumbnail>"),
-                     options);
+                     std::move(options));
 }
 
 // The only diagnostic is an error with code about the thumbnail, and the image has none.

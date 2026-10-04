@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -79,17 +80,21 @@ struct block_header
     bool inline_data = false;
     /// The stored bytes in Base64, for an inline block.
     std::string text{};
-    /// The place of an attached block.
+    /// The place of an attached block, or of a block in a data blocks file.
     std::uint64_t position = 0;
     std::uint64_t size = 0;
+    /// The identifier of the block index element of a block in a data blocks file.
+    std::uint64_t index_id = 0;
     /// How the block is compressed, when it is. Its subblocks are written when it lists them.
     std::optional<block_compression> compression{};
     std::optional<block_checksum> checksum{};
 };
 
 /// The text of the header: the XML declaration, the initial comment, and the root element, whose Metadata element
-/// holds generated and then the metadata of tree. Each data block is described by blocks[i].
+/// holds generated and then the metadata of tree. Each data block is described by blocks[i]. A block that is not
+/// inline is attached, or, when blocks_file is not empty, in the data blocks file of that path from the directory of
+/// the header file.
 [[nodiscard]] std::string format_header(const header_tree& tree, std::span<const xml_element> generated,
-                                        std::span<const block_header> blocks);
+                                        std::span<const block_header> blocks, std::string_view blocks_file = {});
 
 } // namespace openxisf::detail

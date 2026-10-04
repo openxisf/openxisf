@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <memory>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -45,6 +47,15 @@ std::error_code last_error() noexcept
 {
     throw io_error(errc::not_a_regular_file, path + " is not a regular file");
 }
+
+// Releases what the C library allocates.
+struct free_memory
+{
+    void operator()(char* memory) const noexcept
+    {
+        std::free(memory); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): from realpath()
+    }
+};
 
 // The directory that holds the file at path.
 std::string directory_of(const std::string& path)
@@ -106,6 +117,21 @@ std::optional<native_file> native_file::create_new(const std::string& path, std:
         fail(errc::open_failed, "cannot create a temporary file next to " + name, error);
     }
     return native_file(handle, std::move(name));
+}
+
+std::string native_file::canonical_path(const std::string& path)
+{
+    // realpath() allocates the result when it is given no buffer (POSIX.1-2008).
+    const std::unique_ptr<char, free_memory> resolved(::realpath(path.c_str(), nullptr));
+    if (!resolved) {
+        fail(errc::open_failed, "cannot find " + path, last_error());
+    }
+    std::string canonical(resolved.get());
+    // File names are bytes, and a symbolic link can lead to one that is not UTF-8.
+    if (!is_valid_utf8(canonical)) {
+        throw io_error(errc::open_failed, path + " leads to a path that is not valid UTF-8");
+    }
+    return canonical;
 }
 
 std::uint64_t native_file::size() const

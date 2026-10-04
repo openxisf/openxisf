@@ -15,6 +15,7 @@ add_executable(openxisf_tests
     conformance/checksum.cpp
     conformance/compression.cpp
     conformance/display_function.cpp
+    conformance/distributed.cpp
     conformance/fits_keyword.cpp
     conformance/header.cpp
     conformance/icc.cpp
@@ -38,11 +39,13 @@ add_executable(openxisf_tests
     samples/sample_catalog.cpp
     samples/structure.cpp
     support/fixture_builder.cpp
+    support/links.cpp
     support/sparse_file.cpp
     support/temp_directory.cpp
     support/written_unit.cpp
     unit/ancillary_attributes.cpp
     unit/block_attributes.cpp
+    unit/blocks_file.cpp
     unit/callback_io.cpp
     unit/checked_math.cpp
     unit/codecs.cpp
@@ -54,6 +57,7 @@ add_executable(openxisf_tests
     unit/endian.cpp
     unit/error.cpp
     unit/file_io.cpp
+    unit/file_resolver.cpp
     unit/format_specifier.cpp
     unit/hash.cpp
     unit/held_size.cpp
@@ -64,6 +68,7 @@ add_executable(openxisf_tests
     unit/memory_io.cpp
     unit/namespaces.cpp
     unit/outline.cpp
+    unit/paths.cpp
     unit/pixel_layout.cpp
     unit/pixels.cpp
     unit/property_catalog.cpp

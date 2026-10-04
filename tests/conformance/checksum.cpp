@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -91,7 +92,7 @@ std::string embedded_image(std::string_view data_attributes, std::string_view te
 
 unit open_with_attachment(std::string_view body, openxisf::read_options options = {})
 {
-    return open_internal(file_with_attachments(header_xml(body), {abc()}), options);
+    return open_internal(file_with_attachments(header_xml(body), {abc()}), std::move(options));
 }
 
 TEST(conformance_checksum, every_algorithm_verifies_inline_embedded_and_attached_blocks)

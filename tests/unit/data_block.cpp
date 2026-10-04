@@ -420,7 +420,8 @@ TEST(data_block, a_monolithic_file_cannot_have_external_blocks)
     }
 }
 
-TEST(data_block, the_external_blocks_of_a_header_file_are_not_supported)
+// The blocks are located through the resolver of the options, which a unit opened from memory has not.
+TEST(data_block, the_external_blocks_of_a_header_file_need_a_resolver)
 {
     const unit opened = open_internal(bytes(header_xml(row_image(3, R"x(location="path(@header_dir/data.bin)")x"))));
     EXPECT_TRUE(unavailable(opened, "/xisf/Image[1]", errc::unsupported_location, "/xisf/Image[1]"));

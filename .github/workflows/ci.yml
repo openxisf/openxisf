@@ -296,7 +296,7 @@ jobs:
       - name: clang-tidy
         run: |
           git ls-files '*.cpp' ':!:*_win32.cpp' | xargs -P "$(nproc)" -n 1 \
-            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.2.0"'
+            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.3.0"'
 
   # The units that the tests write, checked by others than the library: every header against the XML schema of XISF,
   # which is downloaded here and never committed, and every unit by an independent reader, xisftool of xisf-rs (MIT),
@@ -324,7 +324,7 @@ jobs:
           units="$RUNNER_TEMP/units"
           mkdir -p "$units"
           OPENXISF_WRITTEN_UNITS_DIR="$units" out/build/linux-gcc-release/bin/openxisf_tests --gtest_brief=1
-          echo "::notice::$(find "$units" -name '*.xisf' | wc -l) units written"
+          echo "::notice::$(find "$units" -name '*.xisf' | wc -l) monolithic and $(find "$units" -name '*.xish' | wc -l) distributed units written"
 
       # The server refuses clients that do not look like a browser.
       - name: Validate the headers against the XML schema

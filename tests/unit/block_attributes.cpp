@@ -319,6 +319,22 @@ TEST(block_attributes, formats_attachments_that_parse_back)
               (block_location{.kind = location_kind::attachment, .position = largest, .size = 0}));
 }
 
+TEST(block_attributes, formats_locations_in_data_blocks_files_that_parse_back)
+{
+    using openxisf::detail::format_index_id;
+    using openxisf::detail::format_relative_location;
+    // Spec §10.3: an index-id should be hexadecimal; every one has 16 digits.
+    EXPECT_EQ(format_index_id(0x4d373e33756e480f), "0x4d373e33756e480f");
+    EXPECT_EQ(format_index_id(1), "0x0000000000000001");
+    EXPECT_EQ(format_index_id(UINT64_MAX), "0xffffffffffffffff");
+    EXPECT_EQ(format_relative_location("blocks/a (1).xisb", 0x2a),
+              "path(@header_dir/blocks/a (1).xisb):0x000000000000002a");
+    EXPECT_EQ(parse_location(format_relative_location("unit.xisb", UINT64_MAX)),
+              (block_location{.kind = location_kind::path,
+                              .reference = "@header_dir/unit.xisb",
+                              .index_id = std::uint64_t{UINT64_MAX}}));
+}
+
 TEST(block_attributes, formats_checksums_with_the_names_pixinsight_writes)
 {
     struct expected_name

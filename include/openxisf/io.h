@@ -15,7 +15,8 @@
 #include <vector>
 
 /// @file
-/// Sources and sinks: where units are read from and written to, and the progress of reading and writing.
+/// Sources and sinks: where units are read from and written to, the progress of reading and writing, and the resolvers
+/// that open the external files of distributed units.
 
 namespace openxisf {
 
@@ -251,6 +252,54 @@ private:
     finish_function finish_;
     std::uint64_t position_ = 0;
 };
+
+/// The forms of the location of an external data block (spec §10.3).
+enum class location_form : std::uint8_t
+{
+    url,           ///< `url(URL)`: a local or remote resource.
+    absolute_path, ///< `path(/file/path)`: a local file, by its absolute path in UNIX syntax.
+    relative_path, ///< `path(@header_dir/file/path)`: a local file, by its path from the directory of the header file.
+};
+
+/// A file that holds external data blocks of a distributed unit (spec §10.2): a data blocks file (`.xisb`), or any
+/// other file, whose whole content is one data block.
+struct external_reference
+{
+    location_form form = location_form::relative_path;
+    /// The URL, the absolute path, or the path from the directory of the header file without its `@header_dir/`
+    /// prefix, as the location attribute writes it: `blocks/unit.xisb` for `path(@header_dir/blocks/unit.xisb)`.
+    std::string location{};
+};
+
+/// Opens the file of an external reference, for a reader. Returning null refuses it. Throwing io_error or
+/// unsupported_error says that it cannot be opened, or must not be. The data blocks in the file are then unavailable,
+/// with an error diagnostic of the code of the exception, or errc::unsupported_location for null. Any other exception
+/// passes through and fails the open. A resolver is called while a unit is opened, on that thread, once for each file,
+/// and again when reader::load_ancillary_data() opens the unit again; the reader keeps the source it returns as long as
+/// it exists.
+using external_resolver = std::function<std::unique_ptr<input_source>(const external_reference& reference)>;
+
+/// Options of file_resolver().
+struct file_resolver_options
+{
+    /// Open absolute paths. They name any file of the system, so they are refused by default
+    /// (errc::location_not_allowed). On Windows, `/c/dir/file` names `C:\dir\file`, a network path (`//server/share`)
+    /// is refused, and any other absolute path names no file (errc::unsupported_location).
+    bool absolute_paths = false;
+};
+
+/// A resolver of `path()` locations to regular files. A relative path is resolved from header_directory, and must lead
+/// to a file inside that directory once symbolic links are followed (errc::location_not_allowed otherwise). Paths
+/// follow UNIX syntax (spec §10.3), so on Windows a path with a backslash, a colon or another character that a file
+/// name cannot hold names no file (errc::unsupported_location). `url()` locations are refused
+/// (errc::unsupported_location).
+///
+/// A missing file is errc::open_failed, and a file that is not a regular file, such as a directory or a device,
+/// errc::not_a_regular_file. The checks protect against what a unit names, not against programs that change the
+/// directory tree while a unit is opened.
+/// @throws usage_error when header_directory is empty or not valid UTF-8.
+[[nodiscard]] OPENXISF_API external_resolver file_resolver(std::string_view header_directory,
+                                                           file_resolver_options options = {});
 
 #if defined(_MSC_VER)
 #pragma warning(pop)

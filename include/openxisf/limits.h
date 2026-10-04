@@ -33,6 +33,9 @@ struct limits
     std::uint64_t max_ancillary_data = std::uint64_t{256} << 20;
     /// Number of block index nodes in a data blocks file.
     std::uint64_t max_index_nodes = 65'536;
+    /// Number of external files that the data blocks of a distributed unit name, each opened once and kept open while
+    /// the unit is.
+    std::uint64_t max_external_files = 256;
     /// Window size of Zstandard frames, in bytes, rounded down to a power of two of at least 1 KiB. Only frames that do
     /// not declare their size need a window buffer; the others are decoded in place, within max_allocation.
     std::uint64_t max_zstd_window = std::uint64_t{128} << 20;

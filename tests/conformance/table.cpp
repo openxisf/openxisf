@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -37,13 +38,14 @@ using openxisf::test::single_diagnostic;
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return openxisf::test::open_header(header_xml(body), options);
+    return openxisf::test::open_header(header_xml(body), std::move(options));
 }
 
 reader open_attached(std::string_view body, const std::vector<std::vector<std::byte>>& blocks,
                      openxisf::read_options options = {})
 {
-    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks), options);
+    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks),
+                                     std::move(options));
 }
 
 // The Structure element of the example of spec §11.2.1.

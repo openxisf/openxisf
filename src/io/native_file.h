@@ -35,6 +35,11 @@ public:
     /// file it becomes, which error messages use. Throws io_error with errc::open_failed.
     [[nodiscard]] static std::optional<native_file> create_new(const std::string& path, std::string name);
 
+    /// The canonical path of the file or directory at path: absolute, with every symbolic link resolved (and every
+    /// junction, on Windows), as the system names it. Throws io_error with errc::open_failed when nothing is there or
+    /// the path cannot be resolved, and on Windows with errc::not_a_regular_file for a device, which has no such path.
+    [[nodiscard]] static std::string canonical_path(const std::string& path);
+
     native_file(native_file&& other) noexcept
         : handle_(std::exchange(other.handle_, closed_handle)), name_(std::move(other.name_))
     {}

@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The writer (spec §9.2, §9.5, §10, §11): units written with every option read back as their model, and what their
-// files and headers hold.
+// files and headers hold. The round trips cover distributed units too; what is particular to them is in
+// conformance/distributed.cpp.
 
 #include <openxisf/error.h>
 #include <openxisf/image.h>
@@ -26,6 +27,7 @@
 #include "support/temp_directory.h"
 #include "support/throws.h"
 #include "support/written_unit.h"
+#include "xml/xml_document.h"
 
 #include <gtest/gtest.h>
 #include <pugixml.hpp>
@@ -37,6 +39,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -394,6 +397,43 @@ openxisf::reader open_strictly(std::vector<std::byte> file)
     return openxisf::test::open_unit(std::move(file), {.strict = true});
 }
 
+// Checks that every byte of a data blocks file is in its signature, its block index or a block that the index points
+// to, or zero (spec §9.4), reading the file by itself.
+testing::AssertionResult blocks_file_unused_space_is_zero(std::span<const std::byte> file)
+{
+    const auto number = [file](std::size_t offset, std::size_t size) {
+        std::uint64_t value = 0;
+        for (std::size_t i = 0; i < size; ++i) {
+            value |= std::to_integer<std::uint64_t>(file[offset + i]) << (8U * i);
+        }
+        return value;
+    };
+    if (file.size() < 32 || openxisf::test::text(file.first(8)) != "XISB0100" || number(24, 8) != 0) {
+        return testing::AssertionFailure() << "not a data blocks file of one index node";
+    }
+    const std::uint64_t count = number(16, 4);
+    const std::uint64_t index_end = 32 + (40 * count);
+    if (index_end > file.size()) {
+        return testing::AssertionFailure() << "the index goes beyond the end of the file";
+    }
+    std::vector<bool> used(file.size(), false);
+    std::fill_n(used.begin(), index_end, true);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        const std::uint64_t position = number(32 + (40 * i) + 8, 8);
+        const std::uint64_t length = number(32 + (40 * i) + 16, 8);
+        if (position < index_end || position > file.size() || length > file.size() - position) {
+            return testing::AssertionFailure() << "block " << i << " is not after the index and inside the file";
+        }
+        std::fill_n(used.begin() + static_cast<std::ptrdiff_t>(position), length, true);
+    }
+    for (std::size_t i = 0; i < file.size(); ++i) {
+        if (!used[i] && file[i] != std::byte{0}) {
+            return testing::AssertionFailure() << "byte " << i << " is unused and not zero";
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Round trips of every option
 
@@ -404,6 +444,7 @@ struct round_trip_case
     std::optional<openxisf::checksum_algorithm> checksum{};
     std::uint64_t subblock_size = 0;
     sink_kind sink = sink_kind::rewritable;
+    bool distributed = false;
 };
 
 std::string case_name(const round_trip_case& value)
@@ -419,6 +460,9 @@ std::string case_name(const round_trip_case& value)
         name += "_checksum";
     }
     name += value.sink == sink_kind::rewritable ? "_rewritable" : "_append_only";
+    if (value.distributed) {
+        name += "_distributed";
+    }
     return name;
 }
 
@@ -441,18 +485,44 @@ std::vector<round_trip_case> round_trip_cases()
                 }
                 for (const bool checksum : {false, true}) {
                     for (const sink_kind sink : {sink_kind::rewritable, sink_kind::append_only}) {
-                        round_trip_case entry{
-                            .codec = codec, .shuffle = shuffle, .subblock_size = subblock_size, .sink = sink};
-                        if (checksum) {
-                            entry.checksum = openxisf::checksum_algorithm::sha256;
+                        for (const bool distributed : {false, true}) {
+                            round_trip_case entry{.codec = codec,
+                                                  .shuffle = shuffle,
+                                                  .subblock_size = subblock_size,
+                                                  .sink = sink,
+                                                  .distributed = distributed};
+                            if (checksum) {
+                                entry.checksum = openxisf::checksum_algorithm::sha256;
+                            }
+                            cases.push_back(entry);
                         }
-                        cases.push_back(entry);
                     }
                 }
             }
         }
     }
     return cases;
+}
+
+// A unit written as a round trip case asks, opened strictly, with its header and the check of its unused space.
+struct written_case
+{
+    openxisf::reader unit;
+    std::unique_ptr<pugi::xml_document> header;
+    testing::AssertionResult unused_space_is_zero = testing::AssertionSuccess();
+};
+
+written_case write_case(const openxisf::writer& output, const round_trip_case& tested)
+{
+    if (tested.distributed) {
+        const openxisf::test::distributed_unit unit = openxisf::test::written_distributed(output, tested.sink);
+        return {.unit = openxisf::test::open_distributed(unit, {.strict = true}),
+                .header = openxisf::detail::parse_xml(openxisf::test::text(unit.header), 0, {}),
+                .unused_space_is_zero = blocks_file_unused_space_is_zero(unit.blocks)};
+    }
+    const std::vector<std::byte> file = written(output, tested.sink);
+    return {
+        .unit = open_strictly(file), .header = parsed_header(file), .unused_space_is_zero = unused_space_is_zero(file)};
 }
 
 class conformance_writer_round_trip : public testing::TestWithParam<round_trip_case>
@@ -467,9 +537,9 @@ TEST_P(conformance_writer_round_trip, reads_back_as_its_model)
     options.subblock_size = tested.subblock_size;
     options.checksum = tested.checksum;
     const unit_model model = rich_model();
-    const std::vector<std::byte> file = written(model.writer(options), tested.sink);
+    const written_case written_unit = write_case(model.writer(options), tested);
 
-    const openxisf::reader unit = open_strictly(file);
+    const openxisf::reader& unit = written_unit.unit;
     EXPECT_TRUE(openxisf::test::no_diagnostics(unit.diagnostics()));
     ASSERT_EQ(unit.images().size(), model.images.size());
     for (std::size_t i = 0; i < model.images.size(); ++i) {
@@ -482,10 +552,10 @@ TEST_P(conformance_writer_round_trip, reads_back_as_its_model)
         EXPECT_EQ(unit.metadata().at(item.id), item);
     }
     EXPECT_EQ(unit.metadata().at("XISF:CreationTime").value, property_value(creation_time));
-    EXPECT_TRUE(unused_space_is_zero(file));
+    EXPECT_TRUE(written_unit.unused_space_is_zero);
 
     // Every block has the checksum asked for, and the blocks that compress are compressed; the noise is not.
-    const auto header = parsed_header(file);
+    const std::unique_ptr<pugi::xml_document>& header = written_unit.header;
     for (const pugi::xml_node& element : block_elements(*header)) {
         // PixInsight reads a subblock that is not smaller than its data as data stored as they are.
         if (const std::string_view subblocks = element.attribute("subblocks").value(); !subblocks.empty()) {

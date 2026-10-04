@@ -13,9 +13,13 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace openxisf::test {
 
@@ -45,13 +49,17 @@ std::unique_ptr<pugi::xml_document> parsed_header(std::span<const std::byte> fil
     return detail::parse_xml(header_of(file), 16, {});
 }
 
-void record_unit(std::span<const std::byte> file)
+namespace {
+
+// Records a unit with write in the directory of OPENXISF_WRITTEN_UNITS_DIR, when it is set: write receives the
+// directory and the name of the unit, after the running test. Several units of one test are numbered in order, also
+// when threads write them.
+void record(const std::function<void(const std::filesystem::path& directory, const std::string& base)>& write)
 {
     const std::optional<std::string> directory = environment_variable("OPENXISF_WRITTEN_UNITS_DIR");
     if (!directory || directory->empty()) {
         return;
     }
-    // Several headers of one test are numbered in order, also when threads write them.
     static std::mutex mutex;
     static std::string last_test;
     static int count = 0;
@@ -65,10 +73,28 @@ void record_unit(std::span<const std::byte> file)
             c = '_';
         }
     }
-    const std::string base = name + "." + std::to_string(count);
-    const std::string header = header_of(file);
-    write_file(path_of(*directory) / path_of(base + ".xml"), std::as_bytes(std::span(header.data(), header.size())));
-    write_file(path_of(*directory) / path_of(base + ".xisf"), file);
+    write(path_of(*directory), name + "." + std::to_string(count));
+}
+
+} // namespace
+
+void record_unit(std::span<const std::byte> file)
+{
+    record([file](const std::filesystem::path& directory, const std::string& base) {
+        const std::string header = header_of(file);
+        write_file(directory / path_of(base + ".xml"), std::as_bytes(std::span(header.data(), header.size())));
+        write_file(directory / path_of(base + ".xisf"), file);
+    });
+}
+
+void record_distributed_unit(const distributed_unit& unit)
+{
+    record([&unit](const std::filesystem::path& directory, const std::string& base) {
+        write_file(directory / path_of(base + ".xml"), unit.header);
+        std::filesystem::create_directory(directory / path_of(base));
+        write_file(directory / path_of(base) / "unit.xish", unit.header);
+        write_file(directory / path_of(base) / path_of(blocks_file_name), unit.blocks);
+    });
 }
 
 std::vector<std::byte> written(const writer& output, sink_kind kind)
@@ -85,6 +111,39 @@ std::vector<std::byte> written(const writer& output, sink_kind kind)
     }
     record_unit(file);
     return file;
+}
+
+distributed_unit written_distributed(const writer& output, sink_kind kind)
+{
+    distributed_unit unit;
+    if (kind == sink_kind::rewritable) {
+        memory_sink header;
+        memory_sink blocks;
+        output.save_distributed(header, blocks, blocks_file_name);
+        unit = {.header = header.release(), .blocks = blocks.release()};
+    } else {
+        const auto appender = [](std::vector<std::byte>& target) {
+            return
+                [&target](std::span<const std::byte> data) { target.insert(target.end(), data.begin(), data.end()); };
+        };
+        callback_sink header(appender(unit.header));
+        callback_sink blocks(appender(unit.blocks));
+        output.save_distributed(header, blocks, blocks_file_name);
+    }
+    record_distributed_unit(unit);
+    return unit;
+}
+
+reader open_distributed(const distributed_unit& unit, read_options options)
+{
+    auto blocks = std::make_shared<const std::vector<std::byte>>(unit.blocks);
+    options.resolver = [blocks](const external_reference& reference) -> std::unique_ptr<input_source> {
+        if (reference.form != location_form::relative_path || reference.location != blocks_file_name) {
+            return nullptr;
+        }
+        return std::make_unique<memory_source>(std::span<const std::byte>(*blocks));
+    };
+    return reader(std::make_unique<memory_source>(unit.header), std::move(options));
 }
 
 pugi::xml_node element_at(const pugi::xml_document& header, std::string_view path)

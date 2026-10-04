@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -34,6 +35,9 @@ struct block_descriptor
     /// For an inline or embedded block, its bytes as stored: decoded from their text, and verified against the checksum
     /// when the unit was opened.
     std::vector<std::byte> data{};
+    /// For an external block, the file that holds it, at location.position and location.size, which
+    /// locate_external_blocks() sets. The blocks of a file share it.
+    std::shared_ptr<const thread_safe_source> external{};
 };
 
 /// A data block, and the element that serializes it.
@@ -65,25 +69,29 @@ struct block_context
 ///   hexadecimal data, an attachment beyond the end of the file or inside the header, an attached block in a header
 ///   file or an external block in a monolithic file, subblocks whose sizes do not add up, and an inline or embedded
 ///   block that fails its checksum are errors;
-/// - an unknown codec or checksum algorithm, and an external block, which this version does not read, are errors too;
+/// - an unknown codec or checksum algorithm is an error too;
 /// - Base64 data without padding, uppercase hexadecimal digits, an empty block other than an inline one, a byteOrder
 ///   attribute on an ICCProfile element, an inline block of an Image or Thumbnail element, child elements of another
 ///   element with an inline block, block attributes of an embedded block on the element instead of its Data element,
 ///   and block attributes or Data elements that have no block to describe are warnings.
+///
+/// An external block of a header file is described without its file, its place in the file, and the check of its
+/// subblocks, which locate_external_blocks() adds.
 [[nodiscard]] std::vector<data_block> describe_blocks(const unit_outline& outline, const block_context& context,
                                                       diagnostic_log& log);
 
-/// The bytes of a block as stored: read from source, and verified against the checksum, but not decompressed. An
-/// attached block is verified before it is returned, and an inline or embedded one was verified when the unit was
-/// opened.
+/// The bytes of a block as stored: read from source, or from its external file, and verified against the checksum, but
+/// not decompressed. An attached or external block is verified before it is returned, and an inline or embedded one
+/// was verified when the unit was opened.
 ///
 /// Throws the exception of throw_unit_error() for an unavailable block; integrity_error with errc::checksum_mismatch;
-/// limit_error with errc::allocation_too_large when an attachment is larger than limits.max_allocation; and what the
-/// source throws.
+/// limit_error with errc::allocation_too_large when an attached or external block is larger than
+/// limits.max_allocation; and what the source throws.
 [[nodiscard]] std::vector<std::byte> read_stored_block(const thread_safe_source& source, const data_block& block,
                                                        const limits& limits);
 
-/// The size of the pieces in which an attached block is read when the progress of the read is reported.
+/// The size of the pieces in which an attached or external block is read when the progress of the read is
+/// reported.
 inline constexpr std::size_t default_piece_size = std::size_t{4} << 20;
 
 /// Called while the data of a block are obtained, with the bytes processed so far out of work_size() of its
@@ -92,8 +100,8 @@ inline constexpr std::size_t default_piece_size = std::size_t{4} << 20;
 using block_progress = std::function<void(std::uint64_t done)>;
 
 /// The data of a block: its stored bytes, verified, then decompressed and unshuffled when the block is compressed (spec
-/// §10.6). The byte order stays that of the block. With a progress function, an attachment is read in pieces of
-/// piece_size bytes.
+/// §10.6). The byte order stays that of the block. With a progress function, an attached or external block is read in
+/// pieces of piece_size bytes.
 ///
 /// Throws what read_stored_block() throws, and what decompress_block() throws, with the element of the block as
 /// context: integrity_error with errc::corrupt_compressed_data, limit_error with errc::allocation_too_large when the
@@ -110,7 +118,8 @@ using block_progress = std::function<void(std::uint64_t done)>;
                                                      const block_progress& progress = {},
                                                      std::size_t piece_size = default_piece_size);
 
-/// The size of a block as stored: of the attachment, or of the decoded bytes of an inline or embedded block.
+/// The size of a block as stored: of the attachment or the external block, or of the decoded bytes of an inline or
+/// embedded block.
 [[nodiscard]] std::uint64_t stored_size(const block_descriptor& descriptor) noexcept;
 
 /// The size of the data of a block, which read_block() returns: the uncompressed size of a compressed block.
