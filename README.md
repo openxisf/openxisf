@@ -265,8 +265,8 @@ are checked continuously by fuzzing, sanitizers and static analysis.
 
 ## Author
 
-OpenXISF is written and maintained by Ezequiel Ruiz. Contributors are credited in the history of the repository and in
-the SPDX headers of the files they wrote.
+OpenXISF is written and maintained by Ezequiel Ruiz ([@emruiz81](https://github.com/emruiz81)). Contributors are
+credited in the history of the repository and in the SPDX headers of the files they wrote.
 
 ## License
 
