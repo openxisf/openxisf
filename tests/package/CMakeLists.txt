@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # A consumer of the installed package. The test suite of the main project builds it against a staged
 # install (see tests/CMakeLists.txt), and CI builds it against the vcpkg port.

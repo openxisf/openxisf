@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Opens the input as a unit in memory, with small limits, leniently and strictly. Opening succeeds, or fails with an
 // error of untrusted input: invalid data, data that fail their checksum, an unsupported feature or a limit. Any other

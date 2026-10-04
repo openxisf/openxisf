@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # vcpkg triplet for Linux with Clang and libc++. Dependencies such as pugixml have std::string in their
 # interface, so they must be built against the same standard library as the project.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Pixel reads from 16 threads at once on one reader, whose images are attached, compressed and embedded, on a source
 // that supports concurrent reads and on one that the library serializes. ThreadSanitizer runs these tests in CI.

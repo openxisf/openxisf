@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The units in tests/data/pixinsight, written by PixInsight, the reference implementation of XISF. What the tests
 // expect of them is known from how they were made, not from any decoder.

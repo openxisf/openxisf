@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Custom I/O. Units are read from an openxisf::input_source and written to an openxisf::output_sink, which an
 // application can implement over its own storage. This program implements a source over the function table of a

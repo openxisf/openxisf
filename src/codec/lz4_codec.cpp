@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // LZ4 and LZ4HC (spec §10.6.5 to §10.6.8): the LZ4 block format, without the frame format. Both codecs write the same
 // format, so one decoder serves both.

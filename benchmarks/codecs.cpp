@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Benchmarks of the data block transforms: each codec with and without byte shuffling, byte shuffling alone, and the
 // checksum algorithms, over a 4 MiB image. The numbers are what performance decisions rest on, so the data look like an

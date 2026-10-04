@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Compressed blocks as a whole (spec §10.6): every codec with and without byte shuffling, subblocks, compression levels
 // (spec §11.4.2) and the limits of the decoders.

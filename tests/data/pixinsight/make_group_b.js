@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 //
 // Writes the samples of group B with PixInsight: the pattern images of samples A4 (RGB, Float32), A2 (Gray, UInt16) and
 // A5 (Gray, Float64), created with PixelMath as in make_group_a.js and saved with each compression codec at its default

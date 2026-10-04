@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The data blocks of a unit: which elements have one, where its bytes are, and the rules that tie the attributes of a
 // block to each other and to the unit (spec §10). The checksum rules are in conformance/checksum.cpp, and those of the

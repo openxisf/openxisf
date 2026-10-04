@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 //
 // Writes the samples of group A with PixInsight: the 37 x 23 pattern image, created with PixelMath in each sample
 // format and colour space of the group, and saved without compression or checksums. tests/samples/sample_catalog.cpp

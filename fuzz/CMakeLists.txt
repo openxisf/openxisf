@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # Fuzz targets. When OPENXISF_SANITIZE holds "fuzzer" (Clang), each one is a libFuzzer program, and its test fuzzes for
 # OPENXISF_FUZZ_SECONDS from the committed seeds in seeds/<name>. Otherwise it is linked with a replay driver, and its

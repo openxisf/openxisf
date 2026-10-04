@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // zlib (spec §10.6.3): the zlib format of RFC 1950 over deflate. zlib counts bytes in 32-bit integers, so the streaming
 // API is fed in pieces, and no block is too large for it.

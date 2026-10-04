@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §9.5 (the XML declaration, the root element, namespaces and extension elements) and spec §11 (core element
 // names and unique element identifiers), on constructed units.

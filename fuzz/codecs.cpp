@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The codecs and byte shuffling (spec §10.6). The first byte of the input selects the codec (bits 0 and 1), the mode
 // (bit 2) and the compression level (bits 3 and 4); the second is the item size of byte shuffling, and the next three

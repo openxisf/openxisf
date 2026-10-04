@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The C and C++ stream adapters of <openxisf/stream_io.h>. The program reads a unit from a FILE* and from a
 // std::ifstream, copies it through a sink into a std::stringstream, and reads the copy back from that stream. The

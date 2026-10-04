@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The attributes of data blocks. The input holds, one per line: location, byteOrder, checksum, compression, subblocks,
 // the element (Image, unless the line starts with P for a Property or C for an ICCProfile), the encoding of a Data

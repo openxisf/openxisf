@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Every parser of the plain-text grammar (spec §8.3) and of the data encodings, on the same input, and the conversions
 // between UTF-8 and UTF-16. A parser either accepts the text or throws invalid_data_error, and whatever it accepts must

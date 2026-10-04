@@ -1,7 +1,14 @@
 OpenXISF
-Copyright 2026 The OpenXISF Authors
+Copyright 2026 Ezequiel Ruiz
 
-This product includes software developed by The OpenXISF Authors.
+This product includes software developed by Ezequiel Ruiz and the
+contributors to OpenXISF.
 
 OpenXISF is an independent implementation of the XISF format. It is not
 affiliated with or endorsed by Pleiades Astrophoto S.L. (PixInsight).
+
+The test samples in tests/data/pixinsight were written by PixInsight. The
+RGB samples embed the sRGB IEC61966-2.1 ICC profile that PixInsight embeds
+in the files it writes, which carries the notice "Copyright Hewlett
+Packard, 2004". It is part of the test data only, and is not used by the
+library.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The samples of group D. D1: an image with what describes it (spec §11.6 to §11.12). D2: a colour filter array
 // image (spec §11.10). D3: typed properties written by PixInsight (spec §8.4.4, §11.1), with the values its script set.

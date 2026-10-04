@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Properties as text (spec §8.4, §11.1). The input holds, one per line: a type name, a value, a format specifier, an
 // identifier, and attributes written as they are into the start tag of a Property element; whatever follows is the

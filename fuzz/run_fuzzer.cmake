@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # Runs a libFuzzer target for SECONDS, starting from its committed SEEDS and its local CORPUS, and fails when it finds
 # a crash, a leak or a slow input (written to ARTIFACTS), or when it covers fewer than MIN_COVERAGE edges. The last

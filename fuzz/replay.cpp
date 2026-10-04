@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The main program of a fuzz target built without libFuzzer. It runs the target once on every file given on the command
 // line and on every file of the directories given, so that the committed seeds, which include every input that ever
