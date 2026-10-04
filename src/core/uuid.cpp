@@ -51,6 +51,13 @@ uuid make_uuid_v4(xoshiro256starstar& generator) noexcept
     return id;
 }
 
+bool is_version_4_uuid(const uuid& id) noexcept
+{
+    // RFC 9562: the version is in the high nibble of byte 6, and the variant sets the two high bits of byte 8 to 10.
+    return (std::to_integer<unsigned int>(id[6]) >> 4U) == 4U &&
+           (std::to_integer<unsigned int>(id[8]) & 0xC0U) == 0x80U;
+}
+
 std::string format_uuid(const uuid& id)
 {
     constexpr std::string_view hex_digits = "0123456789abcdef";

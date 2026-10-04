@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <ostream>
 #include <string>
@@ -125,5 +126,32 @@ INSTANTIATE_TEST_SUITE_P(sizes, shuffle_layout, testing::ValuesIn(shuffle_cases(
                              return "item" + std::to_string(parameter.param.item_size) + "_length" +
                                     std::to_string(parameter.param.length);
                          });
+
+TEST(shuffle, a_part_of_the_shuffled_block_is_that_part_of_the_whole)
+{
+    // Every window of a block of 37 bytes, so that parts start and end inside runs, across runs and in the tail.
+    const std::vector<std::byte> input = pattern(37);
+    for (const std::size_t item_size : {0U, 1U, 2U, 3U, 4U, 8U, 16U, 37U, 38U}) {
+        const std::vector<std::byte> whole = shuffled(input, item_size);
+        for (std::size_t offset = 0; offset <= input.size(); ++offset) {
+            for (std::size_t length = 0; offset + length <= input.size(); ++length) {
+                std::vector<std::byte> part(length);
+                openxisf::detail::shuffle_part(input, item_size, offset, part);
+                ASSERT_TRUE(std::equal(part.begin(), part.end(), whole.begin() + static_cast<std::ptrdiff_t>(offset)))
+                    << "items of " << item_size << ", " << length << " bytes at " << offset;
+            }
+        }
+    }
+}
+
+TEST(shuffle, a_part_must_lie_within_the_block)
+{
+    const std::vector<std::byte> input = bytes("abcd");
+    std::vector<std::byte> output(3);
+    EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
+                                              [&] { openxisf::detail::shuffle_part(input, 2, 2, output); }));
+    EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
+                                              [&] { openxisf::detail::shuffle_part(input, 2, 5, {}); }));
+}
 
 } // namespace

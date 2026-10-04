@@ -85,7 +85,7 @@ std::uint64_t max_encoded_size(compression_codec codec) noexcept
 }
 
 // A subblock that did not get smaller is stored as it is, which its two equal sizes tell. The specification does not
-// say so, but PixInsight writes such subblocks.
+// say so, but PixInsight writes such subblocks, and reads every subblock that is not smaller than its data so.
 bool stored_as_is(const subblock& part) noexcept
 {
     return part.compressed_size == part.uncompressed_size;
@@ -160,6 +160,25 @@ int codec_level(compression_codec codec, int level)
     return 0;
 }
 
+int default_abstract_level(compression_codec codec) noexcept
+{
+    // The inverse of scale(), rounded to the nearest abstract level.
+    const auto inverse = [](int level, int lowest, int highest) {
+        return 1 + (((level - lowest) * (highest_level - 1)) + ((highest - lowest) / 2)) / (highest - lowest);
+    };
+    switch (codec) {
+    case compression_codec::zlib:
+        return inverse(zlib_default_level, 0, 9);
+    case compression_codec::lz4hc:
+        return inverse(lz4hc_default_level, 1, 12);
+    case compression_codec::zstd:
+        return inverse(zstd_default_level, 1, 22);
+    case compression_codec::lz4:
+        break;
+    }
+    return 0;
+}
+
 std::vector<subblock> subblocks_of(const block_compression& compression, std::uint64_t stored_size)
 {
     if (!compression.subblocks.empty()) {
@@ -228,34 +247,43 @@ std::vector<std::byte> decompress_block(std::span<const std::byte> stored, const
     return unshuffled;
 }
 
-compressed_block compress_block(std::span<const std::byte> data, const compression_options& options)
+block_compression compress_subblocks(std::span<const std::byte> data, const compression_options& options,
+                                     const subblock_store& store)
 {
     const int level = codec_level(options.codec, options.level);
     const std::uint64_t limit = subblock_size(options);
+    const bool shuffled = options.item_size > 1;
 
-    std::vector<std::byte> shuffled;
-    if (options.item_size > 1) {
-        shuffled.resize(data.size());
-        shuffle_bytes(data, shuffled, static_cast<std::size_t>(options.item_size));
-        data = shuffled;
-    }
-
-    compressed_block result{
-        .compression = {.codec = options.codec, .uncompressed_size = data.size(), .item_size = options.item_size}};
+    block_compression result{.codec = options.codec, .uncompressed_size = data.size(), .item_size = options.item_size};
+    std::vector<std::byte> part;
+    std::vector<std::byte> output;
     std::size_t offset = 0;
     do {
         const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(limit, data.size() - offset));
-        const std::size_t start = result.data.size();
-        const std::span<const std::byte> part = data.subspan(offset, size);
-        compress_subblock(options.codec, part, level, result.data);
-        if (result.data.size() - start >= size) {
-            result.data.resize(start);
-            result.data.insert(result.data.end(), part.begin(), part.end());
+        std::span<const std::byte> input = data.subspan(offset, size);
+        if (shuffled) {
+            part.resize(size);
+            shuffle_part(data, static_cast<std::size_t>(options.item_size), offset, part);
+            input = part;
         }
-        result.compression.subblocks.push_back(
-            {.compressed_size = result.data.size() - start, .uncompressed_size = size});
+        output.clear();
+        compress_subblock(options.codec, input, level, output);
+        const std::span<const std::byte> stored = output.size() >= size ? input : std::span<const std::byte>(output);
+        const subblock sizes{.compressed_size = stored.size(), .uncompressed_size = size};
+        store(stored, sizes);
+        result.subblocks.push_back(sizes);
         offset += size;
     } while (offset < data.size());
+    return result;
+}
+
+compressed_block compress_block(std::span<const std::byte> data, const compression_options& options)
+{
+    compressed_block result;
+    result.compression =
+        compress_subblocks(data, options, [&result](std::span<const std::byte> stored, const subblock& /*sizes*/) {
+            result.data.insert(result.data.end(), stored.begin(), stored.end());
+        });
     if (result.compression.subblocks.size() == 1) {
         result.compression.subblocks.clear();
     }

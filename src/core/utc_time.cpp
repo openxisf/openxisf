@@ -251,7 +251,7 @@ civil_date civil_from_days(std::int64_t days) noexcept
             .day = static_cast<unsigned>(day_of_year - days_before_month(month_from_march) + 1)};
 }
 
-std::string format_utc_time(std::chrono::sys_time<std::chrono::nanoseconds> time)
+date_time date_time_of(std::chrono::sys_time<std::chrono::nanoseconds> time) noexcept
 {
     constexpr std::int64_t nanoseconds_per_second = 1'000'000'000;
     constexpr std::int64_t seconds_per_day = 86'400;
@@ -272,13 +272,18 @@ std::string format_utc_time(std::chrono::sys_time<std::chrono::nanoseconds> time
 
     // A 64-bit count of nanoseconds spans the years 1677 to 2262, so the year always has four digits.
     const civil_date date = civil_from_days(days);
-    return format_time_point({.year = static_cast<int>(date.year),
-                              .month = date.month,
-                              .day = date.day,
-                              .hour = static_cast<unsigned>(second_of_day / 3600),
-                              .minute = static_cast<unsigned>(second_of_day / 60 % 60),
-                              .second = static_cast<unsigned>(second_of_day % 60),
-                              .nanosecond = static_cast<std::uint32_t>(nanoseconds)});
+    return {.year = static_cast<int>(date.year),
+            .month = date.month,
+            .day = date.day,
+            .hour = static_cast<unsigned>(second_of_day / 3600),
+            .minute = static_cast<unsigned>(second_of_day / 60 % 60),
+            .second = static_cast<unsigned>(second_of_day % 60),
+            .nanosecond = static_cast<std::uint32_t>(nanoseconds)};
+}
+
+std::string format_utc_time(std::chrono::sys_time<std::chrono::nanoseconds> time)
+{
+    return format_time_point(date_time_of(time));
 }
 
 date_time parse_time_point(std::string_view text)

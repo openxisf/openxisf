@@ -44,7 +44,7 @@ enum class errc
     not_an_xisf_unit,        ///< A source starts neither with the signature of a monolithic file nor with XML.
     invalid_header_length,   ///< The header length of a monolithic file is wrong, or counts bytes after the XML.
     reserved_field_not_zero, ///< A field reserved by the specification is not zero.
-    header_too_large,        ///< The header is larger than limits::max_header_size.
+    header_too_large,        ///< The header is larger than limits::max_header_size, or than a monolithic file can hold.
     invalid_xml,             ///< The header is not well-formed XML 1.0 in UTF-8.
     doctype_not_allowed,     ///< The header has a document type declaration.
     xml_too_deep,            ///< XML elements are nested deeper than limits::max_xml_depth.
@@ -100,6 +100,7 @@ enum class errc
     invalid_thumbnail,          ///< A Thumbnail element that breaks the restrictions of spec §11.12.
     invalid_table,     ///< A Table, Structure, Field, Row or Cell element that breaks the rules of spec §11.2 or §11.3.
     duplicate_element, ///< An image has a second element of a kind it can have once, such as a second ICC profile.
+    invalid_character, ///< Text holds a character that an XML header cannot hold, such as a control character.
 };
 
 /// Where in a unit a problem was found. Empty or absent members are unknown or do not apply.
@@ -185,7 +186,8 @@ public:
     ~limit_error() override;
 };
 
-/// A model given to the writer violates the XISF specification.
+/// A model given to the writer violates the XISF specification. Its context names the element that the offending
+/// object would be written as.
 class OPENXISF_API validation_error : public error
 {
 public:

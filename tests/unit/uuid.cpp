@@ -67,6 +67,21 @@ TEST(uuid, version_4_sets_the_version_and_variant_fields)
         const uuid id = make_uuid_v4(generator);
         ASSERT_EQ(id[6] >> 4, std::byte{0x4});
         ASSERT_EQ(id[8] >> 6, std::byte{0x2});
+        ASSERT_TRUE(openxisf::detail::is_version_4_uuid(id));
+    }
+}
+
+TEST(uuid, version_4_is_told_by_the_version_and_the_variant)
+{
+    using openxisf::detail::is_version_4_uuid;
+    using openxisf::detail::parse_uuid;
+    EXPECT_TRUE(is_version_4_uuid(parse_uuid("c5c93b6d-9072-4e85-9548-1a5391377683")));
+    EXPECT_TRUE(is_version_4_uuid(parse_uuid("c5c93b6d-9072-4e85-b548-1a5391377683")));
+    // Version 1 and 7, and the variants of NCS, Microsoft and the future.
+    for (const char* text : {"c5c93b6d-9072-1e85-9548-1a5391377683", "c5c93b6d-9072-7e85-9548-1a5391377683",
+                             "c5c93b6d-9072-4e85-7548-1a5391377683", "c5c93b6d-9072-4e85-c548-1a5391377683",
+                             "c5c93b6d-9072-4e85-f548-1a5391377683"}) {
+        EXPECT_FALSE(is_version_4_uuid(parse_uuid(text))) << text;
     }
 }
 

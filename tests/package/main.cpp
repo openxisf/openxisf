@@ -159,6 +159,34 @@ bool reads_descriptions_through_the_library()
            info.tables[0].rows.at(0).at(0).get<std::string>() == "Vega";
 }
 
+// The writer across the boundary: a unit written into a sink of the library, a typed image, which calls an exported
+// member from a template, and a validation error caught by its type.
+bool writes_through_the_library()
+{
+    openxisf::writer output({.creator_application = "consumer 1.0",
+                             .codec = openxisf::codec::zstd,
+                             .byte_shuffle = true,
+                             .checksum = openxisf::checksum_algorithm::sha1});
+    openxisf::image_info info;
+    info.geometry = {.dimensions = {3, 2}, .channels = 1};
+    info.properties.set("Instrument:ExposureTime", 300.0F);
+    const std::vector<std::uint16_t> samples{1, 2, 3, 4, 5, 6};
+    (void)output.add_image(info, std::span<const std::uint16_t>(samples));
+    openxisf::memory_sink sink;
+    output.save(sink);
+    const openxisf::reader file(std::make_unique<openxisf::memory_source>(sink.release()), {.strict = true});
+    if (file.read_pixels<std::uint16_t>(0) != samples || file.image(0).properties != info.properties) {
+        return false;
+    }
+    try {
+        openxisf::writer invalid({.creator_application = "no version"});
+        invalid.save(sink);
+    } catch (const openxisf::validation_error& failure) {
+        return failure.code() == openxisf::errc::invalid_metadata;
+    }
+    return false;
+}
+
 } // namespace
 
 // Built against an installed package. It fails when the header, the library and the package version file
@@ -195,6 +223,10 @@ int main()
         }
         if (!reads_descriptions_through_the_library()) {
             std::cerr << "the elements that describe images do not read as expected\n";
+            return 1;
+        }
+        if (!writes_through_the_library()) {
+            std::cerr << "the writer of the library does not write units as expected\n";
             return 1;
         }
         return 0;

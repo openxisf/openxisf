@@ -7,7 +7,9 @@ include(GoogleTest)
 add_executable(openxisf_tests
     concurrency/io.cpp
     concurrency/pixels.cpp
+    concurrency/writer.cpp
     conformance/availability.cpp
+    conformance/baseline_encoder.cpp
     conformance/byte_order.cpp
     conformance/cfa.cpp
     conformance/checksum.cpp
@@ -25,16 +27,20 @@ add_executable(openxisf_tests
     conformance/signature.cpp
     conformance/table.cpp
     conformance/thumbnail.cpp
+    conformance/writer.cpp
+    conformance/writer_validation.cpp
     samples/group_a.cpp
     samples/group_b.cpp
     samples/group_c.cpp
     samples/group_d.cpp
     samples/large.cpp
+    samples/rewrite.cpp
     samples/sample_catalog.cpp
     samples/structure.cpp
     support/fixture_builder.cpp
     support/sparse_file.cpp
     support/temp_directory.cpp
+    support/written_unit.cpp
     unit/ancillary_attributes.cpp
     unit/block_attributes.cpp
     unit/callback_io.cpp
@@ -76,6 +82,7 @@ add_executable(openxisf_tests
     unit/uuid.cpp
     unit/version.cpp
     unit/xml_document.cpp
+    unit/xml_writer.cpp
     unit/xoshiro.cpp)
 
 target_include_directories(openxisf_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

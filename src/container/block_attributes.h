@@ -98,4 +98,25 @@ struct block_checksum
 /// errc::invalid_subblocks.
 [[nodiscard]] std::vector<subblock> parse_subblocks(std::string_view text);
 
+// The values that an encoder writes, which the parsers above read back.
+
+/// The location of an attached block, attachment:position:size.
+[[nodiscard]] std::string format_attachment(std::uint64_t position, std::uint64_t size);
+
+/// The name of an algorithm in a checksum attribute: the alternate names sha1, sha256 and sha512, which PixInsight
+/// writes, and sha3-256 and sha3-512, which have none.
+[[nodiscard]] std::string_view checksum_name(hash_algorithm algorithm) noexcept;
+
+/// The value of a checksum attribute, algorithm:digest, with the digest in lowercase hexadecimal digits.
+[[nodiscard]] std::string format_checksum(const block_checksum& checksum);
+
+/// The name of the codec of a compression attribute, with +sh for byte shuffling, such as zstd+sh.
+[[nodiscard]] std::string_view compression_name(const block_compression& compression) noexcept;
+
+/// The value of a compression attribute: codec:uncompressed-size, or codec+sh:uncompressed-size:item-size.
+[[nodiscard]] std::string format_compression(const block_compression& compression);
+
+/// The value of a subblocks attribute, c1,u1:c2,u2:...:cN,uN, for at least one subblock.
+[[nodiscard]] std::string format_subblocks(const std::vector<subblock>& subblocks);
+
 } // namespace openxisf::detail

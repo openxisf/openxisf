@@ -34,14 +34,6 @@ bool is_floating_point(sample_format format) noexcept
     return format == sample_format::float32 || format == sample_format::float64;
 }
 
-// RFC 9562: the version is in the high nibble of byte 6, and the variant of version 4 sets the two high bits of byte 8
-// to 10.
-bool is_version_4(const uuid& id) noexcept
-{
-    return (std::to_integer<unsigned int>(id[6]) >> 4U) == 4U &&
-           (std::to_integer<unsigned int>(id[8]) & 0xC0U) == 0x80U;
-}
-
 // The elements that can be associated with an Image or Thumbnail element, besides properties, which the properties of
 // the unit associate: a thumbnail has no colour filter array or thumbnail of its own (spec §11.12).
 bool associable(element_kind owner, element_kind kind) noexcept
@@ -809,7 +801,7 @@ private:
         try {
             const uuid id = parse_uuid(attribute.value());
             info.uuid = format_uuid(id);
-            if (!is_version_4(id)) {
+            if (!is_version_4_uuid(id)) {
                 log_.warning(errc::invalid_uuid, quote(attribute.value()) + " is not a version 4 UUID",
                              context("uuid"));
             }

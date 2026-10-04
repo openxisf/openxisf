@@ -296,7 +296,72 @@ jobs:
       - name: clang-tidy
         run: |
           git ls-files '*.cpp' ':!:*_win32.cpp' | xargs -P "$(nproc)" -n 1 \
-            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.1.0"'
+            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.2.0"'
+
+  # The units that the tests write, checked by others than the library: every header against the XML schema of XISF,
+  # which is downloaded here and never committed, and every unit by an independent reader, xisftool of xisf-rs (MIT),
+  # installed here and never linked. The second check only reports.
+  writer-output:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev libxml2-utils
+
+      - name: Configure
+        run: cmake --preset linux-gcc-release -DCMAKE_CXX_COMPILER=g++-14
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-release --target openxisf_tests
+
+      - name: Write the units of the tests
+        run: |
+          units="$RUNNER_TEMP/units"
+          mkdir -p "$units"
+          OPENXISF_WRITTEN_UNITS_DIR="$units" out/build/linux-gcc-release/bin/openxisf_tests --gtest_brief=1
+          echo "::notice::$(find "$units" -name '*.xisf' | wc -l) units written"
+
+      # The server refuses clients that do not look like a browser.
+      - name: Validate the headers against the XML schema
+        run: |
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/xisf-1.0.xsd" \
+            -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' \
+            -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' \
+            https://pixinsight.com/xisf/xisf-1.0.xsd
+          find "$RUNNER_TEMP/units" -name '*.xml' -print0 |
+            xargs -0 -n 50 xmllint --noout --schema "$RUNNER_TEMP/xisf-1.0.xsd" > "$RUNNER_TEMP/xmllint.log" 2>&1 ||
+            { grep -v ' validates$' "$RUNNER_TEMP/xmllint.log" | head -50; exit 1; }
+          echo "::notice::$(grep -c ' validates$' "$RUNNER_TEMP/xmllint.log") headers valid"
+
+      - name: Read the units with xisftool
+        continue-on-error: true
+        run: |
+          cargo install xisftool --version 0.5.1 --locked --quiet
+          failed=0
+          total=0
+          read_unit() {
+            if ! xisftool info -v "$1" || ! xisftool verify "$1"; then
+              return 1
+            fi
+            # The pixel data, decompressed, of units that have an image.
+            if grep -q '<Image ' "${1%.xisf}.xml"; then
+              xisftool dump "$1"
+            fi
+          }
+          for unit in "$RUNNER_TEMP"/units/*.xisf; do
+            total=$((total + 1))
+            if ! read_unit "$unit" > /dev/null 2> "$RUNNER_TEMP/xisftool.log"; then
+              failed=$((failed + 1))
+              echo "::warning::xisftool cannot read $(basename "$unit"): $(head -c 300 "$RUNNER_TEMP/xisftool.log")"
+            fi
+          done
+          echo "::notice::xisftool read $((total - failed)) of $total units"
+          test "$failed" -eq 0
 
   windows:
     needs: plan
@@ -503,7 +568,7 @@ jobs:
   # A single check that stands for the whole workflow, and that a skipped platform does not break.
   required:
     if: ${{ always() }}
-    needs: [plan, lint, linux, sanitizers, fuzz, tidy, windows, msys2, macos, vcpkg-port]
+    needs: [plan, lint, linux, sanitizers, fuzz, tidy, writer-output, windows, msys2, macos, vcpkg-port]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

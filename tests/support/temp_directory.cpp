@@ -122,4 +122,14 @@ std::string temp_directory::file(std::string_view name) const
     return utf8(path_ / path_of(name));
 }
 
+std::size_t temp_directory::entries() const
+{
+    std::size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(path_)) {
+        (void)entry;
+        ++count;
+    }
+    return count;
+}
+
 } // namespace openxisf::test

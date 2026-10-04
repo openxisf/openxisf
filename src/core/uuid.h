@@ -23,6 +23,9 @@ using uuid = std::array<std::byte, 16>;
 /// The canonical form, such as c5c93b6d-9072-4e85-9548-1a5391377683, in lowercase.
 [[nodiscard]] std::string format_uuid(const uuid& id);
 
+/// True when id is a version 4 UUID of the variant of RFC 9562.
+[[nodiscard]] bool is_version_4_uuid(const uuid& id) noexcept;
+
 /// Parses the canonical form. Hexadecimal digits are accepted in either case, as RFC 9562 requires. Throws
 /// invalid_data_error.
 [[nodiscard]] uuid parse_uuid(std::string_view text);

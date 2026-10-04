@@ -13,6 +13,7 @@
 #include <openxisf/stream_io.h>
 #include <openxisf/types.h>
 #include <openxisf/version.h>
+#include <openxisf/writer.h>
 
 /// @file
 /// Umbrella header: includes the whole public API.

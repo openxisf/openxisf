@@ -5,17 +5,21 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: 0.1.0, an early release.** It reads monolithic units; writing, distributed units and the algorithms of the
-specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a unit
-(the file structure, the XML, the root element, the elements of the specification and the references between them) and
-its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with SHA-1,
-SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its images and
-the standalone ones, with values of every type of the specification, and tables; its images: their geometry, sample
-format, colour space and other attributes, and their pixel data, decompressed and in native byte order, in either
+**Status: 0.2.0, an early release.** It reads and writes monolithic units; distributed units and the algorithms of
+the specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a
+unit (the file structure, the XML, the root element, the elements of the specification and the references between
+them) and its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with
+SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its
+images and the standalone ones, with values of every type of the specification, and tables; its images: their geometry,
+sample format, colour space and other attributes, and their pixel data, decompressed and in native byte order, in either
 storage model, into memory of the library or of the application, with progress and cancellation; and what describes
 each image: FITS keywords, ICC profile, RGB working space, display function, colour filter array, resolution and
-thumbnail. Distributed units (external data blocks) are recognized but not read yet, and nothing can be written. The
-repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
+thumbnail. Distributed units (external data blocks) are recognized but not read yet. `openxisf::writer` writes the
+same model back: it checks a whole unit against the specification before it writes a byte of it, and writes its
+metadata, images, properties and tables, with every block uncompressed and without checksums unless asked otherwise,
+so that every XISF 1.0 decoder reads the result. On request it compresses blocks with zlib, LZ4, LZ4HC or Zstandard,
+with byte shuffling and subblocks, adds checksums and generates UUIDs. Files are replaced only once they are complete.
+The repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
 input and output layer, and the internal building blocks: the text forms of numbers and Boolean values, Base64 and
 hexadecimal data, UUIDs and time stamps.
 
@@ -23,15 +27,15 @@ hexadecimal data, UUIDs and time stamps.
 
 | Area | Reading | Writing |
 |---|---|---|
-| Monolithic units (`.xisf`) | Yes | Planned |
+| Monolithic units (`.xisf`) | Yes | Yes |
 | Distributed units (`.xish` headers and `.xisb` blocks files) | Planned | Planned |
-| Data blocks: attachment, embedded, inline | Yes | Planned |
+| Data blocks: attachment, embedded, inline | Yes | Attachment and inline |
 | Data blocks: `url()` and `path()` | Planned | Planned |
-| Checksums: SHA-1, SHA-256, SHA-512, SHA3-256, SHA3-512 | Yes | Planned |
-| Compression: zlib, LZ4, LZ4HC, Zstandard, with byte shuffling and subblocks | Yes | Planned |
-| Properties: scalars, complex numbers, strings, time points, vectors, matrices, tables | Yes | Planned |
-| Images: every sample format, planar and normal storage, both byte orders | Yes | Planned |
-| Ancillary elements: FITS keywords, ICC profile, RGB working space, display function, color filter array, resolution, thumbnail | Yes | Planned |
+| Checksums: SHA-1, SHA-256, SHA-512, SHA3-256, SHA3-512 | Yes | Yes |
+| Compression: zlib, LZ4, LZ4HC, Zstandard, with byte shuffling and subblocks | Yes | Yes |
+| Properties: scalars, complex numbers, strings, time points, vectors, matrices, tables | Yes | Yes |
+| Images: every sample format, planar and normal storage, both byte orders | Yes | Yes, in little-endian byte order |
+| Ancillary elements: FITS keywords, ICC profile, RGB working space, display function, color filter array, resolution, thumbnail | Yes | Yes |
 | Colour transformations, display functions, orientation, property format rendering | Planned | Planned |
 | Astrometric solutions | Planned | Planned |
 | Signed units (the signature is returned, not verified) | Planned | Not applicable |
@@ -146,7 +150,33 @@ const bool header_only = arguments.size() == 3 && arguments[1] == "--header-only
 const openxisf::reader file(arguments.back(), {.header_only = header_only});
 ```
 
-Writing arrives with a later release.
+A unit is written with `openxisf::writer`, from the same model that the reader returns, so that a unit read can be
+written again. This excerpt of `samples/write_image.cpp` writes an image with properties, FITS keywords and a
+thumbnail, compressed with Zstandard and byte shuffling, with SHA-256 checksums; without these options the writer
+compresses nothing and adds no checksums, which every XISF 1.0 decoder reads, and Zstandard needs a decoder of
+Revision 1 of the specification:
+
+```cpp
+openxisf::image_info info;
+info.geometry = {.dimensions = {width, height}, .channels = 3};
+info.sample_format = openxisf::sample_format::float32;
+info.color_space = openxisf::color_space::rgb;
+info.bounds = openxisf::bounds{.lower = 0.0, .upper = 1.0};
+info.properties.set("Instrument:ExposureTime", 300.0F);
+info.fits_keywords.push_back({.name = "EXPTIME", .value = "300.", .comment = "Exposure time in seconds"});
+info.thumbnail = make_thumbnail(samples);
+
+openxisf::writer output({.creator_application = "write_image sample 1.0",
+                         .codec = openxisf::codec::zstd,
+                         .byte_shuffle = true,
+                         .checksum = openxisf::checksum_algorithm::sha256});
+output.add_image(info, std::span(samples));
+output.save(path);
+```
+
+The writer checks the whole unit before it writes anything, and throws `openxisf::validation_error`, which names the
+element at fault, for anything that the specification forbids. The pixel data are borrowed until `save()`, which can
+also write to any `openxisf::output_sink`.
 
 Units are read from an `openxisf::input_source` and written to an `openxisf::output_sink`. The library provides them for
 files (paths are UTF-8 on every platform, and a file is replaced only when it has been written completely), for memory,
@@ -196,7 +226,9 @@ These are the design rules. They take effect as the API arrives.
   code. A problem confined to one object of a unit, such as an unsupported codec, makes that object unavailable and is
   reported as a diagnostic, in `reader::diagnostics()`; the rest of the unit stays readable. Harmless deviations from
   the specification are diagnostics too. `read_options::strict` turns the problems that make an object unavailable into
-  failures. A long read can be cancelled from its progress function, which then throws `openxisf::cancelled_error`.
+  failures. A writer refuses a unit that violates the specification with `openxisf::validation_error`, before it
+  writes anything. A long read or save can be cancelled from its progress function, which then throws
+  `openxisf::cancelled_error`.
 - **Text.** The API carries text as UTF-8 in `std::string` and `std::string_view`, paths included, on every platform.
   Invalid UTF-8 is rejected.
 

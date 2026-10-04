@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -37,6 +38,9 @@ public:
 
     /// The UTF-8 path of the entry called name, which is UTF-8 too.
     [[nodiscard]] std::string file(std::string_view name) const;
+
+    /// The number of entries in the directory.
+    [[nodiscard]] std::size_t entries() const;
 
 private:
     std::filesystem::path path_;

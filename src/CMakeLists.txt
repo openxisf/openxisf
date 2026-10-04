@@ -17,6 +17,7 @@ set(internal_sources
     container/block_attributes.cpp
     container/data_block.cpp
     container/file_layout.cpp
+    container/unit_writer.cpp
     core/checked_math.cpp
     core/data_encoding.cpp
     core/diagnostic_log.cpp
@@ -39,6 +40,7 @@ set(internal_sources
     model/ancillary_budget.cpp
     model/format_specifier.cpp
     model/header.cpp
+    model/header_tree.cpp
     model/held_size.cpp
     model/image_attributes.cpp
     model/images.cpp
@@ -52,9 +54,11 @@ set(internal_sources
     model/property_types.cpp
     model/tables.cpp
     model/unit.cpp
+    model/validation.cpp
     model/value_reader.cpp
     xml/namespaces.cpp
-    xml/xml_document.cpp)
+    xml/xml_document.cpp
+    xml/xml_writer.cpp)
 if(WIN32)
     list(APPEND internal_sources io/native_file_win32.cpp)
 else()
@@ -68,6 +72,7 @@ set(public_sources
     property.cpp
     reader.cpp
     version.cpp
+    writer.cpp
     io/callback.cpp
     io/file.cpp
     io/interfaces.cpp
