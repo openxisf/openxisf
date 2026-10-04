@@ -409,7 +409,7 @@
         "rhs": "Linux"
       },
       "cacheVariables": {
-        "CMAKE_CXX_FLAGS": "--coverage",
+        "CMAKE_CXX_FLAGS": "--coverage -fprofile-update=atomic",
         "OPENXISF_HARDENING": "OFF"
       }
     }
