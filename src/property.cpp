@@ -5,6 +5,7 @@
 #include <openxisf/property.h>
 
 #include "core/text_grammar.h"
+#include "core/utc_time.h"
 #include "model/property_text.h"
 #include "model/property_types.h"
 
@@ -122,6 +123,11 @@ double to_double(float128 value) noexcept
         return with_sign(std::bit_cast<std::uint64_t>(std::numeric_limits<double>::infinity()));
     }
     return with_sign((biased << 52U) | (kept & ((std::uint64_t{1} << 52U) - 1)));
+}
+
+date_time to_date_time(std::chrono::sys_time<std::chrono::nanoseconds> time) noexcept
+{
+    return detail::date_time_of(time);
 }
 
 std::string_view property_type_name(property_type type) noexcept

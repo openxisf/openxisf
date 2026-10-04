@@ -15,6 +15,12 @@ namespace openxisf::detail {
 /// 1, or one larger than the input, copies the input unchanged.
 void shuffle_bytes(std::span<const std::byte> input, std::span<std::byte> output, std::size_t item_size);
 
+/// Writes part of the shuffled bytes of input to output: the output.size() bytes that start at offset in the shuffled
+/// block, which must lie within it. It computes them from input directly, so that a subblock of a shuffled block needs
+/// no buffer of the whole block.
+void shuffle_part(std::span<const std::byte> input, std::size_t item_size, std::size_t offset,
+                  std::span<std::byte> output);
+
 /// Reverses shuffle_bytes(): writes the unshuffled bytes of input to output, under the same conditions.
 void unshuffle_bytes(std::span<const std::byte> input, std::span<std::byte> output, std::size_t item_size);
 

@@ -168,7 +168,8 @@ TEST(compressed_block, a_block_above_the_subblock_size_is_divided_and_shuffled_b
     }
 }
 
-// PixInsight writes a subblock that does not compress as it is, with equal sizes (see the large sample L1).
+// PixInsight writes a subblock that does not compress as it is, with equal sizes (see the large sample L1), and reads
+// codec output that is not smaller than its data as data stored as they are, so the encoder stores such subblocks so.
 TEST(compressed_block, a_subblock_that_does_not_compress_is_stored_as_it_is)
 {
     // 4,000 bytes that every codec compresses, followed by 4,000 bytes of noise, which none does.
@@ -190,6 +191,39 @@ TEST(compressed_block, a_subblock_that_does_not_compress_is_stored_as_it_is)
         EXPECT_TRUE(noise.compression.subblocks.empty());
         EXPECT_TRUE(std::ranges::equal(noise.data, std::span(data).last(4000)));
     }
+}
+
+TEST(compressed_block, subblocks_are_compressed_and_handed_over_one_at_a_time)
+{
+    // 2,500 bytes in subblocks of 1,000: each one reaches the store, in order, before the next one is compressed.
+    const std::vector<std::byte> data = samples(2500);
+    for (const compression_codec codec : all_codecs) {
+        std::vector<std::byte> stored;
+        std::vector<subblock> handed;
+        const block_compression compression =
+            openxisf::detail::compress_subblocks(data, {.codec = codec, .item_size = 2, .max_subblock_size = 1000},
+                                                 [&](std::span<const std::byte> part, const subblock& sizes) {
+                                                     EXPECT_EQ(part.size(), sizes.compressed_size);
+                                                     stored.insert(stored.end(), part.begin(), part.end());
+                                                     handed.push_back(sizes);
+                                                 });
+        EXPECT_EQ(compression.subblocks, handed) << name_of(codec);
+        ASSERT_EQ(handed.size(), 3U);
+        EXPECT_EQ(handed.back().uncompressed_size, 500U);
+        EXPECT_EQ(decompress_block(stored, compression, {}), data) << name_of(codec);
+
+        // A block within the subblock size is one subblock, which is listed.
+        EXPECT_EQ(openxisf::detail::compress_subblocks(data, {.codec = codec}, [](auto, auto) {}).subblocks.size(), 1U);
+    }
+    // What the store throws stops the compression.
+    std::size_t calls = 0;
+    EXPECT_THROW((void)openxisf::detail::compress_subblocks(data, {.max_subblock_size = 1000},
+                                                            [&calls](auto, auto) {
+                                                                ++calls;
+                                                                throw std::runtime_error("stop");
+                                                            }),
+                 std::runtime_error);
+    EXPECT_EQ(calls, 1U);
 }
 
 TEST(compressed_block, a_subblock_with_equal_sizes_is_copied_whatever_the_codec_could_take)
@@ -371,12 +405,25 @@ TEST(compressed_block, abstract_levels_map_linearly_to_the_levels_of_each_codec)
     }
 }
 
+TEST(compressed_block, the_default_level_of_each_codec_has_an_abstract_level)
+{
+    // XISF:CompressionLevel reports it, and it gives the default level back.
+    using openxisf::detail::default_abstract_level;
+    EXPECT_EQ(default_abstract_level(compression_codec::zlib), 67);
+    EXPECT_EQ(default_abstract_level(compression_codec::lz4hc), 73);
+    EXPECT_EQ(default_abstract_level(compression_codec::zstd), 10);
+    EXPECT_EQ(default_abstract_level(compression_codec::lz4), 0);
+    for (const compression_codec codec : {compression_codec::zlib, compression_codec::lz4hc, compression_codec::zstd}) {
+        EXPECT_EQ(codec_level(codec, default_abstract_level(codec)), codec_level(codec, 0)) << name_of(codec);
+    }
+}
+
 TEST(compressed_block, the_level_reaches_the_codec)
 {
     // Each higher level makes these data smaller, once they are shuffled.
     const std::vector<std::byte> data = samples(100'000);
     for (const compression_codec codec : {compression_codec::zlib, compression_codec::lz4hc, compression_codec::zstd}) {
-        std::size_t previous = data.size() + 1;
+        std::size_t previous = std::numeric_limits<std::size_t>::max();
         for (const int level : {1, 50, 100}) {
             const compressed_block block = compress_block(data, {.codec = codec, .item_size = 2, .level = level});
             EXPECT_LT(block.data.size(), previous) << name_of(codec) << " at " << level;

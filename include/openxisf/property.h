@@ -5,6 +5,7 @@
 
 #include <openxisf/export.h>
 
+#include <chrono>
 #include <complex>
 #include <concepts>
 #include <cstddef>
@@ -77,6 +78,10 @@ struct date_time
     /// Chronological order.
     friend auto operator<=>(const date_time&, const date_time&) = default;
 };
+
+/// The date_time of a time point of the system clock, such as std::chrono::system_clock::now(). The system clock counts
+/// no leap seconds, so the second is never 60.
+[[nodiscard]] OPENXISF_API date_time to_date_time(std::chrono::sys_time<std::chrono::nanoseconds> time) noexcept;
 
 /// The types of property values (spec §8.4.4). A table property is a table, serialized as a Table element, so it has no
 /// type here.

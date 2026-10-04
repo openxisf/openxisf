@@ -45,6 +45,11 @@ public:
     /// The digest of everything given to update(). The hasher cannot be used afterwards.
     [[nodiscard]] std::vector<std::byte> finish();
 
+    [[nodiscard]] hash_algorithm algorithm() const noexcept
+    {
+        return algorithm_;
+    }
+
 private:
     std::variant<sha1, sha256, sha512, sha3> state_;
     hash_algorithm algorithm_;

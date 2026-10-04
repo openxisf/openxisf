@@ -270,4 +270,63 @@ std::vector<subblock> parse_subblocks(std::string_view text)
     return subblocks;
 }
 
+std::string format_attachment(std::uint64_t position, std::uint64_t size)
+{
+    return "attachment:" + format_integer(position) + ":" + format_integer(size);
+}
+
+std::string_view checksum_name(hash_algorithm algorithm) noexcept
+{
+    switch (algorithm) {
+    case hash_algorithm::sha1:
+        return "sha1";
+    case hash_algorithm::sha256:
+        return "sha256";
+    case hash_algorithm::sha512:
+        return "sha512";
+    case hash_algorithm::sha3_256:
+        return "sha3-256";
+    case hash_algorithm::sha3_512:
+        return "sha3-512";
+    }
+    return {};
+}
+
+std::string format_checksum(const block_checksum& checksum)
+{
+    return std::string(checksum_name(checksum.algorithm)) + ":" + encode_hex(checksum.digest);
+}
+
+std::string_view compression_name(const block_compression& compression) noexcept
+{
+    const bool shuffled = compression.item_size != 0;
+    for (const codec_entry& entry : codec_names) {
+        if (entry.codec == compression.codec && entry.shuffled == shuffled) {
+            return entry.name;
+        }
+    }
+    return {};
+}
+
+std::string format_compression(const block_compression& compression)
+{
+    std::string text = std::string(compression_name(compression)) + ":" + format_integer(compression.uncompressed_size);
+    if (compression.item_size != 0) {
+        text += ":" + format_integer(compression.item_size);
+    }
+    return text;
+}
+
+std::string format_subblocks(const std::vector<subblock>& subblocks)
+{
+    std::string text;
+    for (const subblock& part : subblocks) {
+        if (!text.empty()) {
+            text += ':';
+        }
+        text += format_integer(part.compressed_size) + "," + format_integer(part.uncompressed_size);
+    }
+    return text;
+}
+
 } // namespace openxisf::detail

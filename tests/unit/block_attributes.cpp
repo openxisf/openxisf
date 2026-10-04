@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -305,6 +306,64 @@ TEST(block_attributes, refuses_malformed_subblocks)
         EXPECT_TRUE(throws<invalid_data_error>(errc::invalid_subblocks, [text] { (void)parse_subblocks(text); }))
             << "'" << text << "'";
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The values an encoder writes
+
+TEST(block_attributes, formats_attachments_that_parse_back)
+{
+    constexpr std::uint64_t largest = 18'446'744'073'709'551'615U;
+    EXPECT_EQ(openxisf::detail::format_attachment(4096, 6220800), "attachment:4096:6220800");
+    EXPECT_EQ(parse_location(openxisf::detail::format_attachment(largest, 0)),
+              (block_location{.kind = location_kind::attachment, .position = largest, .size = 0}));
+}
+
+TEST(block_attributes, formats_checksums_with_the_names_pixinsight_writes)
+{
+    struct expected_name
+    {
+        hash_algorithm algorithm = hash_algorithm::sha1;
+        std::string_view name{};
+    };
+    for (const expected_name& entry : {expected_name{.algorithm = hash_algorithm::sha1, .name = "sha1"},
+                                       expected_name{.algorithm = hash_algorithm::sha256, .name = "sha256"},
+                                       expected_name{.algorithm = hash_algorithm::sha512, .name = "sha512"},
+                                       expected_name{.algorithm = hash_algorithm::sha3_256, .name = "sha3-256"},
+                                       expected_name{.algorithm = hash_algorithm::sha3_512, .name = "sha3-512"}}) {
+        EXPECT_EQ(openxisf::detail::checksum_name(entry.algorithm), entry.name);
+        const openxisf::detail::block_checksum checksum{
+            .algorithm = entry.algorithm,
+            .digest = std::vector<std::byte>(openxisf::detail::digest_size(entry.algorithm), std::byte{0xA5})};
+        const std::string text = openxisf::detail::format_checksum(checksum);
+        EXPECT_TRUE(text.starts_with(std::string(entry.name) + ":a5a5")) << text;
+        EXPECT_EQ(parse_checksum(text), checksum);
+    }
+}
+
+TEST(block_attributes, formats_the_compression_of_every_codec)
+{
+    for (const compression_codec codec :
+         {compression_codec::zlib, compression_codec::lz4, compression_codec::lz4hc, compression_codec::zstd}) {
+        for (const std::uint64_t item_size : {0U, 1U, 4U, 16U}) {
+            const block_compression compression{.codec = codec, .uncompressed_size = 6220800, .item_size = item_size};
+            const std::string text = openxisf::detail::format_compression(compression);
+            EXPECT_EQ(text.find('+') != std::string::npos, item_size != 0) << text;
+            EXPECT_EQ(parse_compression(text), compression) << text;
+        }
+    }
+    EXPECT_EQ(openxisf::detail::format_compression(
+                  {.codec = compression_codec::zstd, .uncompressed_size = 201326592, .item_size = 4}),
+              "zstd+sh:201326592:4");
+    EXPECT_EQ(openxisf::detail::compression_name({.codec = compression_codec::lz4hc}), "lz4hc");
+}
+
+TEST(block_attributes, formats_subblocks)
+{
+    const std::vector<subblock> subblocks{{.compressed_size = 10, .uncompressed_size = 20},
+                                          {.compressed_size = 30, .uncompressed_size = 40}};
+    EXPECT_EQ(openxisf::detail::format_subblocks(subblocks), "10,20:30,40");
+    EXPECT_EQ(parse_subblocks(openxisf::detail::format_subblocks(subblocks)), subblocks);
 }
 
 } // namespace

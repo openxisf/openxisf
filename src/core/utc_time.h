@@ -36,6 +36,9 @@ struct civil_date
 /// second follows the seconds without trailing zeros, as in 2015-01-23T19:52:31.46Z.
 [[nodiscard]] std::string format_utc_time(std::chrono::sys_time<std::chrono::nanoseconds> time);
 
+/// time as a date_time, to_date_time() of the public API.
+[[nodiscard]] date_time date_time_of(std::chrono::sys_time<std::chrono::nanoseconds> time) noexcept;
+
 /// Parses a TimePoint value (spec §8.4.4.4): an ISO 8601 date, YYYY-MM-DD, optionally followed by T and a time,
 /// hh:mm, hh:mm:ss or hh:mm:ss.fraction, and a zone, Z, ±hh or ±hh:mm; leading and trailing white space is ignored.
 /// A time without a zone is in UTC, and 24:00:00 is the end of the day. The result is the same instant in UTC, so its

@@ -24,6 +24,10 @@ namespace openxisf::detail {
 /// level outside 0 to 100.
 [[nodiscard]] int codec_level(compression_codec codec, int level);
 
+/// The abstract level that gives the default level of codec, the level of codec_level(codec, 0): 67 for zlib, 73 for
+/// LZ4HC and 10 for Zstandard. 0 for LZ4, which has no levels.
+[[nodiscard]] int default_abstract_level(compression_codec codec) noexcept;
+
 /// The subblocks of a compressed block of stored_size bytes: those of compression, or a single one for the whole block
 /// when it has none. A subblock whose compressed and uncompressed sizes are equal holds its data as they are, not
 /// compressed: the specification does not say so, but PixInsight writes such subblocks when they do not compress.
@@ -70,11 +74,22 @@ struct compressed_block
     block_compression compression{};
 };
 
-/// Compresses a block: shuffles all of it, divides it into subblocks of subblock_size() bytes (the last one shorter),
-/// and compresses each. A subblock that does not get smaller is stored as it is, so a block that does not compress
-/// comes back unchanged, but shuffled, with a stored size equal to its uncompressed size. The subblocks are listed only
-/// when there are several. Throws usage_error with
-/// errc::invalid_argument for an invalid level, and what the codec adapters throw.
+/// Called by compress_subblocks() with each subblock once it is compressed: its stored bytes and its sizes. It may
+/// throw to stop the compression; the exception passes through.
+using subblock_store = std::function<void(std::span<const std::byte> stored, const subblock& sizes)>;
+
+/// Compresses a block one subblock at a time: the block is shuffled as a whole and divided into subblocks of
+/// subblock_size() bytes (the last one shorter), and each subblock is shuffled from data, compressed and given to store
+/// before the next one, so that only one subblock is held at a time. A subblock that does not get smaller is stored as
+/// it is, with equal sizes (see subblocks_of()), as PixInsight stores it: PixInsight takes any subblock that is not
+/// smaller than its data for data stored as they are, so it would misread codec output that is. Returns how the block
+/// is compressed, with every subblock listed, even a single one. Throws usage_error with errc::invalid_argument for an
+/// invalid level, what the codec adapters throw, and what store throws.
+block_compression compress_subblocks(std::span<const std::byte> data, const compression_options& options,
+                                     const subblock_store& store);
+
+/// Compresses a block with compress_subblocks() into memory. The subblocks are listed only when there are several. A
+/// block that does not compress at all comes back with its stored size equal to its uncompressed size, shuffled.
 [[nodiscard]] compressed_block compress_block(std::span<const std::byte> data, const compression_options& options);
 
 } // namespace openxisf::detail

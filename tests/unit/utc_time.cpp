@@ -102,6 +102,23 @@ TEST(utc_time, times_before_1970_round_down)
     EXPECT_EQ(format_utc_time(sys_time<nanoseconds>{nanoseconds{-1}}), "1969-12-31T23:59:59.999999999Z");
 }
 
+TEST(utc_time, a_time_point_of_the_system_clock_is_its_civil_time)
+{
+    using std::chrono::January;
+    using std::chrono::year;
+
+    EXPECT_EQ(
+        openxisf::to_date_time(at(year{2015} / January / 23, (19 * 3600) + (52 * 60) + 31, 460'000'000)),
+        (date_time{
+            .year = 2015, .month = 1, .day = 23, .hour = 19, .minute = 52, .second = 31, .nanosecond = 460'000'000}));
+    EXPECT_EQ(
+        openxisf::to_date_time(sys_time<nanoseconds>{nanoseconds{-1}}),
+        (date_time{
+            .year = 1969, .month = 12, .day = 31, .hour = 23, .minute = 59, .second = 59, .nanosecond = 999'999'999}));
+    EXPECT_EQ(openxisf::to_date_time(std::chrono::sys_days{year{2024} / std::chrono::February / 29}),
+              (date_time{.year = 2024, .month = 2, .day = 29}));
+}
+
 TEST(utc_time, extremes_of_a_64_bit_nanosecond_count)
 {
     EXPECT_EQ(format_utc_time(sys_time<nanoseconds>{nanoseconds{std::numeric_limits<std::int64_t>::min()}}),
