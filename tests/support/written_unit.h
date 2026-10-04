@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <openxisf/reader.h>
 #include <openxisf/writer.h>
 
 #include <pugixml.hpp>
@@ -40,6 +41,27 @@ void record_unit(std::span<const std::byte> file);
 
 /// The unit that output writes into a sink of the given kind, recorded with record_unit().
 [[nodiscard]] std::vector<std::byte> written(const writer& output, sink_kind kind = sink_kind::rewritable);
+
+/// The name of the data blocks file of the distributed units that the tests write.
+inline constexpr std::string_view blocks_file_name = "unit.xisb";
+
+/// A distributed unit as the writer writes it: a header file, and a data blocks file that the header names
+/// blocks_file_name.
+struct distributed_unit
+{
+    std::vector<std::byte> header{};
+    std::vector<std::byte> blocks{};
+};
+
+/// Writes a distributed unit to the directory of OPENXISF_WRITTEN_UNITS_DIR, when it is set, as record_unit() writes a
+/// monolithic file: name.xml, the header, and the unit itself in a directory of that name.
+void record_distributed_unit(const distributed_unit& unit);
+
+/// The distributed unit that output writes into sinks of the given kind, recorded with record_distributed_unit().
+[[nodiscard]] distributed_unit written_distributed(const writer& output, sink_kind kind = sink_kind::rewritable);
+
+/// Opens a distributed unit in memory, with a resolver that finds its data blocks file.
+[[nodiscard]] reader open_distributed(const distributed_unit& unit, read_options options = {});
 
 /// The first element at a path of element names below the root element, such as "Image/Property", or an empty node.
 [[nodiscard]] pugi::xml_node element_at(const pugi::xml_document& header, std::string_view path);

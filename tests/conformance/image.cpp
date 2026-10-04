@@ -60,14 +60,15 @@ std::string pair_image(std::string_view attributes = {})
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return openxisf::test::open_header(header_xml(body), options);
+    return openxisf::test::open_header(header_xml(body), std::move(options));
 }
 
 // Opens a unit whose images have attached blocks: {N} in body locates blocks[N].
 reader open_attached(std::string_view body, const std::vector<std::vector<std::byte>>& blocks,
                      openxisf::read_options options = {})
 {
-    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks), options);
+    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks),
+                                     std::move(options));
 }
 
 // The only diagnostic is an error with code about the first image, which is left out.

@@ -80,17 +80,21 @@ struct write_options
     /// data. It applies with a codec only.
     bool byte_shuffle = false;
     /// The largest piece of a compressed block, before compression, in bytes: a block is divided into subblocks of this
-    /// size, which decoders can decompress in parallel. With 0, blocks are divided only where a codec requires it.
+    /// size, which decoders can decompress in parallel. With 0, blocks are divided only where a codec requires it. A
+    /// subblock that the codec does not make smaller is stored as it is, with equal compressed and uncompressed sizes,
+    /// as PixInsight stores and reads such subblocks; decoders that know only the specification may not read them.
     std::uint64_t subblock_size = 0;
     /// Give each data block a checksum with this algorithm; none when empty.
     std::optional<checksum_algorithm> checksum{};
     /// Give each image without a UUID a new version 4 UUID.
     bool generate_uuids = false;
     /// Attached data blocks start at multiples of this many bytes, with zeros in between; 0 or 1 for none
-    /// (XISF:BlockAlignmentSize).
+    /// (XISF:BlockAlignmentSize). The blocks of a data blocks file start at multiples of it from the start of that
+    /// file, and the header file of a distributed unit, which has no attached blocks, does not report it.
     std::uint16_t block_alignment = 4096;
     /// The data blocks of properties, table cells and ICC profiles of up to this many bytes are written in the header,
-    /// in Base64 (XISF:MaxInlineBlockSize). Larger blocks, and pixel data, are attached after the header.
+    /// in Base64 (XISF:MaxInlineBlockSize). Larger blocks, and pixel data, are attached after the header, or written to
+    /// the data blocks file of a distributed unit.
     std::uint16_t max_inline_block_size = 3072;
     /// Flush a file to the storage device before it replaces its target, so that it survives a power failure. Slower.
     bool flush_to_disk = false;
@@ -107,8 +111,9 @@ struct write_options
 #pragma warning(disable : 4251)
 #endif
 
-/// Writes monolithic XISF units (spec §9.2): a model of a unit, its metadata, images, standalone properties and tables,
-/// with the pixel data of each image.
+/// Writes XISF units: a model of a unit, its metadata, images, standalone properties and tables, with the pixel data of
+/// each image, as a monolithic file (spec §9.2) with save(), or as a distributed unit (spec §9.1.2) with
+/// save_distributed(): a header file and a data blocks file, which the header locates relative to its own directory.
 ///
 /// save() checks the whole model against the specification before it writes anything, and throws validation_error,
 /// naming the object, for the first violation. The pixel data are borrowed: they must stay valid and unchanged until
@@ -130,8 +135,8 @@ public:
     [[nodiscard]] const write_options& options() const noexcept;
 
     /// The properties of the unit (spec §11.4), in the XISF namespace, such as XISF:Title. The writer writes
-    /// XISF:CreationTime, XISF:CreatorApplication, XISF:CreatorModule, XISF:CreatorOS, XISF:BlockAlignmentSize and
-    /// XISF:MaxInlineBlockSize, and XISF:ChecksumAlgorithms, XISF:CompressionCodecs and XISF:CompressionLevel when they
+    /// XISF:CreationTime, XISF:CreatorApplication, XISF:CreatorModule, XISF:CreatorOS, XISF:MaxInlineBlockSize, and
+    /// XISF:BlockAlignmentSize, XISF:ChecksumAlgorithms, XISF:CompressionCodecs and XISF:CompressionLevel when they
     /// apply, itself: it ignores the properties of these identifiers here, so that the metadata that a reader returns
     /// can be given back.
     [[nodiscard]] property_list& metadata() noexcept;
@@ -175,6 +180,27 @@ public:
     /// header written last; any other sink receives the unit in order, so compressed blocks are held in memory until
     /// the header is written.
     void save(output_sink& sink) const;
+
+    /// Writes the unit as a distributed unit: a header file at path, which is UTF-8 on every platform and ends with
+    /// .xish (spec §9.6), and a data blocks file of the same name ending with .xisb, which holds the data blocks that
+    /// the header does not. The header locates each of them by the name of that file (`path(@header_dir/name.xisb)`),
+    /// so the two files can move together. Both are replaced only once both are complete, the data blocks file first.
+    /// The identifiers of the blocks are random, so a header file left with another data blocks file, after a failure
+    /// between the two replacements, finds none of its blocks there.
+    /// @throws usage_error when path is empty, not valid UTF-8, or does not end with .xish in any case, or when its
+    ///         file name holds a control character or a backslash, which the header cannot locate.
+    /// @throws validation_error, io_error or cancelled_error as the other save() does.
+    void save_distributed(std::string_view path) const;
+
+    /// Writes the unit as a distributed unit to two sinks, with the exceptions of the other save_distributed(): the
+    /// header file to header, and the data blocks file to blocks, whose path from the directory of the header file is
+    /// blocks_path, in UNIX syntax (spec §10.3), ending with .xisb. Both sinks are written completely before blocks,
+    /// then header, is finished. A sink of blocks that can rewrite is written once, with the block index written last;
+    /// any other sink of blocks receives the file in order, so compressed blocks are held in memory first.
+    /// @throws usage_error when header and blocks are the same sink, or blocks_path is not a relative path in UNIX
+    ///         syntax that ends with .xisb in any case: empty, absolute, with a . or .. step, a backslash, or a control
+    ///         character.
+    void save_distributed(output_sink& header, output_sink& blocks, std::string_view blocks_path) const;
 
 private:
     static void check_sample_format(const image_info& info, sample_format format);

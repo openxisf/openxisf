@@ -21,11 +21,19 @@ void throw_unit_error(errc code, std::string_view message, error_context context
     case errc::unsupported_sample_format:
     case errc::unsupported_color_space:
     case errc::codec_failure:
+    case errc::location_not_allowed:
         throw unsupported_error(code, message, std::move(context));
     case errc::allocation_too_large:
     case errc::zstd_window_too_large:
     case errc::ancillary_data_too_large:
+    case errc::too_many_index_nodes:
+    case errc::too_many_external_files:
         throw limit_error(code, message, std::move(context));
+    case errc::open_failed:
+    case errc::not_a_regular_file:
+    case errc::read_failed:
+    case errc::end_of_data:
+        throw io_error(code, message, {}, std::move(context));
     default:
         throw invalid_data_error(code, message, std::move(context));
     }

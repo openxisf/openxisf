@@ -28,7 +28,7 @@ namespace openxisf::test {
 /// Opens the unit in memory.
 [[nodiscard]] inline detail::unit open_internal(std::vector<std::byte> unit, read_options options = {})
 {
-    return {std::make_unique<memory_source>(std::move(unit)), options};
+    return {std::make_unique<memory_source>(std::move(unit)), std::move(options)};
 }
 
 /// The block of the element at path. Fails the test when there is none.

@@ -5,8 +5,8 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: 0.2.0, an early release.** It reads and writes monolithic units; distributed units and the algorithms of
-the specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a
+**Status: 0.3.0, an early release.** It reads and writes monolithic and distributed units; the algorithms of the
+specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a
 unit (the file structure, the XML, the root element, the elements of the specification and the references between
 them) and its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with
 SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its
@@ -14,11 +14,14 @@ images and the standalone ones, with values of every type of the specification, 
 sample format, colour space and other attributes, and their pixel data, decompressed and in native byte order, in either
 storage model, into memory of the library or of the application, with progress and cancellation; and what describes
 each image: FITS keywords, ICC profile, RGB working space, display function, colour filter array, resolution and
-thumbnail. Distributed units (external data blocks) are recognized but not read yet. `openxisf::writer` writes the
-same model back: it checks a whole unit against the specification before it writes a byte of it, and writes its
-metadata, images, properties and tables, with every block uncompressed and without checksums unless asked otherwise,
-so that every XISF 1.0 decoder reads the result. On request it compresses blocks with zlib, LZ4, LZ4HC or Zstandard,
-with byte shuffling and subblocks, adds checksums and generates UUIDs. Files are replaced only once they are complete.
+thumbnail. A distributed unit, a header file whose data blocks are in data blocks files (`.xisb`) or other files, is
+read the same way: a resolver opens each file, by default only inside the directory of the header file, and the block
+index of each data blocks file is checked. `openxisf::writer` writes the same model back: it checks a whole unit
+against the specification before it writes a byte of it, and writes its metadata, images, properties and tables, with
+every block uncompressed and without checksums unless asked otherwise, so that every XISF 1.0 decoder reads the result.
+On request it compresses blocks with zlib, LZ4, LZ4HC or Zstandard, with byte shuffling and subblocks, adds checksums
+and generates UUIDs. It writes a monolithic file, or a distributed unit: a header file and a data blocks file next to
+it. Files are replaced only once they are complete.
 The repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
 input and output layer, and the internal building blocks: the text forms of numbers and Boolean values, Base64 and
 hexadecimal data, UUIDs and time stamps.
@@ -28,9 +31,9 @@ hexadecimal data, UUIDs and time stamps.
 | Area | Reading | Writing |
 |---|---|---|
 | Monolithic units (`.xisf`) | Yes | Yes |
-| Distributed units (`.xish` headers and `.xisb` blocks files) | Planned | Planned |
+| Distributed units (`.xish` headers and `.xisb` blocks files) | Yes | Yes |
 | Data blocks: attachment, embedded, inline | Yes | Attachment and inline |
-| Data blocks: `url()` and `path()` | Planned | Planned |
+| Data blocks: `url()` and `path()` | Yes, through a resolver: by default `path()` inside the header's directory | `path()` in the header's directory |
 | Checksums: SHA-1, SHA-256, SHA-512, SHA3-256, SHA3-512 | Yes | Yes |
 | Compression: zlib, LZ4, LZ4HC, Zstandard, with byte shuffling and subblocks | Yes | Yes |
 | Properties: scalars, complex numbers, strings, time points, vectors, matrices, tables | Yes | Yes |
@@ -178,6 +181,31 @@ The writer checks the whole unit before it writes anything, and throws `openxisf
 element at fault, for anything that the specification forbids. The pixel data are borrowed until `save()`, which can
 also write to any `openxisf::output_sink`.
 
+`save_distributed()` writes a distributed unit instead: a header file, and a data blocks file that the header locates
+relative to its own directory, so that the two can move together. A unit opened from a path finds its data blocks files
+in the directory of its header file and nowhere else; any other place, an absolute path, a URL or a store of the
+application, is opened by a resolver of the application. This excerpt of `samples/distributed.cpp` writes a unit into
+memory and reads it back with a resolver that finds its data blocks file there:
+
+```cpp
+openxisf::memory_sink header;
+openxisf::memory_sink blocks;
+output.save_distributed(header, blocks, "blocks/unit.xisb");
+auto store = std::make_shared<std::map<std::string, std::vector<std::byte>>>();
+(*store)["blocks/unit.xisb"] = blocks.release();
+
+openxisf::read_options options;
+options.resolver = [store](const openxisf::external_reference& reference)
+    -> std::unique_ptr<openxisf::input_source> {
+    const auto found = store->find(reference.location);
+    if (reference.form != openxisf::location_form::relative_path || found == store->end()) {
+        return nullptr;
+    }
+    return std::make_unique<openxisf::memory_source>(std::span<const std::byte>(found->second));
+};
+const openxisf::reader from_memory(std::make_unique<openxisf::memory_source>(header.release()), options);
+```
+
 Units are read from an `openxisf::input_source` and written to an `openxisf::output_sink`. The library provides them for
 files (paths are UTF-8 on every platform, and a file is replaced only when it has been written completely), for memory,
 for functions of the application, and, in `<openxisf/stream_io.h>`, for C and C++ streams (`samples/stream_io.cpp`). An
@@ -241,8 +269,10 @@ Files are untrusted input. The design goals are: every size and offset is overfl
 bounds-checked; allocations are limited and configurable, and so are the size of the XML header, the nesting of its
 elements and their number, and the window of Zstandard data; checksums are verified before data is used, compressed
 data included, which are never decompressed when their checksum fails; decompression produces exactly the declared size
-or fails; a document type declaration in the XML header is rejected; there is no network access; paths in distributed units stay inside the header's directory by default. They
-are checked continuously by fuzzing, sanitizers and static analysis.
+or fails; a document type declaration in the XML header is rejected; there is no network access; the paths of a
+distributed unit stay inside the directory of its header file, once symbolic links are followed, and absolute paths and
+URLs are opened only by a resolver of the application. They are checked continuously by fuzzing, sanitizers and static
+analysis.
 
 ## Contributing
 

@@ -187,6 +187,39 @@ bool writes_through_the_library()
     return false;
 }
 
+// A distributed unit across the boundary: written into two sinks, read with a resolver of the application, and the file
+// resolver of the library, which refuses a path outside its directory.
+bool reads_distributed_units_through_the_library()
+{
+    openxisf::writer output({.creator_application = "consumer 1.0"});
+    openxisf::image_info info;
+    info.geometry = {.dimensions = {2, 2}, .channels = 1};
+    const std::vector<std::uint16_t> samples{1, 2, 3, 4};
+    (void)output.add_image(info, std::span<const std::uint16_t>(samples));
+    openxisf::memory_sink header;
+    auto blocks = std::make_shared<openxisf::memory_sink>();
+    output.save_distributed(header, *blocks, "unit.xisb");
+    const openxisf::reader file(std::make_unique<openxisf::memory_source>(header.release()),
+                                {.strict = true, .resolver = [blocks](const openxisf::external_reference& reference) {
+                                     return reference.location == "unit.xisb"
+                                                ? std::make_unique<openxisf::memory_source>(blocks->data())
+                                                : nullptr;
+                                 }});
+    if (file.storage() != openxisf::unit_storage::distributed || file.read_pixels<std::uint16_t>(0) != samples) {
+        return false;
+    }
+    try {
+        (void)openxisf::file_resolver(".")(
+            {.form = openxisf::location_form::relative_path, .location = "../unit.xisb"});
+    } catch (const openxisf::unsupported_error& failure) {
+        return failure.code() == openxisf::errc::location_not_allowed;
+    } catch (const openxisf::io_error& failure) {
+        // The working directory has no parent with that file.
+        return failure.code() == openxisf::errc::open_failed;
+    }
+    return false;
+}
+
 } // namespace
 
 // Built against an installed package. It fails when the header, the library and the package version file
@@ -227,6 +260,10 @@ int main()
         }
         if (!writes_through_the_library()) {
             std::cerr << "the writer of the library does not write units as expected\n";
+            return 1;
+        }
+        if (!reads_distributed_units_through_the_library()) {
+            std::cerr << "the distributed units of the library do not read as expected\n";
             return 1;
         }
         return 0;

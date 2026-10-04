@@ -15,6 +15,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -31,7 +32,7 @@ using openxisf::test::single_diagnostic;
 reader open_resolution(std::string_view attributes, openxisf::read_options options = {})
 {
     return openxisf::test::open_header(header_xml(image_xml({}, "<Resolution " + std::string(attributes) + "/>")),
-                                       options);
+                                       std::move(options));
 }
 
 testing::AssertionResult unavailable(const reader& file)

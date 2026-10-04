@@ -57,10 +57,19 @@ TEST(diagnostic_log, the_exception_of_an_error_says_what_kind_of_failure_it_is)
 {
     EXPECT_TRUE(throws<openxisf::integrity_error>(errc::checksum_mismatch,
                                                   [] { throw_unit_error(errc::checksum_mismatch, "message", {}); }));
-    for (const errc code : {errc::unsupported_version, errc::unsupported_location, errc::unsupported_checksum,
-                            errc::unsupported_compression, errc::unsupported_property_type,
-                            errc::unsupported_sample_format, errc::unsupported_color_space}) {
+    for (const errc code :
+         {errc::unsupported_version, errc::unsupported_location, errc::unsupported_checksum,
+          errc::unsupported_compression, errc::unsupported_property_type, errc::unsupported_sample_format,
+          errc::unsupported_color_space, errc::location_not_allowed}) {
         EXPECT_TRUE(throws<openxisf::unsupported_error>(code, [code] { throw_unit_error(code, "message", {}); }));
+    }
+    for (const errc code : {errc::allocation_too_large, errc::ancillary_data_too_large, errc::too_many_index_nodes,
+                            errc::too_many_external_files}) {
+        EXPECT_TRUE(throws<openxisf::limit_error>(code, [code] { throw_unit_error(code, "message", {}); }));
+    }
+    // The external files of a distributed unit that cannot be opened or read.
+    for (const errc code : {errc::open_failed, errc::not_a_regular_file, errc::read_failed, errc::end_of_data}) {
+        EXPECT_TRUE(throws<openxisf::io_error>(code, [code] { throw_unit_error(code, "message", {}); }));
     }
     for (const errc code : {errc::duplicate_uid, errc::invalid_location, errc::invalid_checksum}) {
         EXPECT_TRUE(throws<openxisf::invalid_data_error>(code, [code] { throw_unit_error(code, "message", {}); }));

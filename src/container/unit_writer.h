@@ -8,6 +8,7 @@
 #include <openxisf/writer.h>
 
 #include "codec/compression.h"
+#include "core/xoshiro.h"
 #include "model/unit_contents.h"
 
 #include <optional>
@@ -15,8 +16,10 @@
 #include <string>
 #include <string_view>
 
-// Monolithic files as the writer writes them (spec §9.2): the header at byte 16, then the attached data blocks, each at
-// a multiple of the block alignment, with zeros in the unused space.
+// Units as the writer writes them: monolithic files (spec §9.2), the header at byte 16, then the attached data blocks,
+// each at a multiple of the block alignment, with zeros in the unused space; and distributed units (spec §9.1.2), a
+// header file and a data blocks file (spec §9.4) whose single index node is followed by the blocks, aligned the same
+// way.
 
 namespace openxisf::detail {
 
@@ -49,5 +52,16 @@ struct save_context
 /// cancelled_error when options.progress returns false; and what the sink and the progress function throw.
 void write_unit(const unit_contents& unit, const write_options& options, const save_context& context,
                 output_sink& sink);
+
+/// Writes unit, which validate_unit() accepted, as a distributed unit: the header file to header, and the blocks that
+/// are not inline to a data blocks file in blocks, which the header locates as path(@header_dir/blocks_name):index-id.
+/// Each block gets an element of the single index node, with an identifier from ids, unique in the file; the blocks
+/// follow the index, aligned. A sink of blocks that can rewrite gets the index last; another gets the blocks compressed
+/// into memory or hashed first, as write_unit() does. Both sinks are complete before blocks, then header, is finished.
+///
+/// Throws what write_unit() throws.
+void write_distributed_unit(const unit_contents& unit, const write_options& options, const save_context& context,
+                            output_sink& header, output_sink& blocks, std::string_view blocks_name,
+                            xoshiro256starstar ids);
 
 } // namespace openxisf::detail

@@ -15,6 +15,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -30,7 +31,7 @@ using openxisf::test::single_diagnostic;
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return openxisf::test::open_header(header_xml(body), options);
+    return openxisf::test::open_header(header_xml(body), std::move(options));
 }
 
 // An image whose only content is the keyword with the given attributes.

@@ -54,8 +54,6 @@ constexpr std::array<codec_entry, 8> codec_names{{
     {.name = "zstd+sh", .codec = compression_codec::zstd, .shuffled = true},
 }};
 
-constexpr std::string_view header_directory = "@header_dir/";
-
 // The algorithm of a name of Table 9 of spec §10.5, compared exactly.
 std::optional<hash_algorithm> algorithm_named(std::string_view name) noexcept
 {
@@ -136,7 +134,7 @@ block_location parse_external(std::string_view text, location_kind kind, std::st
 void check_path(std::string_view text, std::string_view path)
 {
     const bool absolute = path.size() > 1 && path.front() == '/';
-    const bool relative = path.size() > header_directory.size() && path.starts_with(header_directory);
+    const bool relative = path.size() > header_directory_prefix.size() && path.starts_with(header_directory_prefix);
     if (!absolute && !relative) {
         throw_invalid_location(text, "holds neither an absolute path nor a path that starts with @header_dir/");
     }
@@ -273,6 +271,21 @@ std::vector<subblock> parse_subblocks(std::string_view text)
 std::string format_attachment(std::uint64_t position, std::uint64_t size)
 {
     return "attachment:" + format_integer(position) + ":" + format_integer(size);
+}
+
+std::string format_index_id(std::uint64_t id)
+{
+    constexpr std::string_view hex_digits = "0123456789abcdef";
+    std::string text = "0x";
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        text += hex_digits[(id >> static_cast<unsigned>(shift)) & 0xFU];
+    }
+    return text;
+}
+
+std::string format_relative_location(std::string_view path, std::uint64_t id)
+{
+    return "path(" + std::string(header_directory_prefix) + std::string(path) + "):" + format_index_id(id);
 }
 
 std::string_view checksum_name(hash_algorithm algorithm) noexcept

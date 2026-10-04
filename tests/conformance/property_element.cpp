@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -49,14 +50,14 @@ using openxisf::test::throws;
 // A unit whose root element holds body, after the Metadata element.
 unit open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return open_internal(monolithic_file(header_xml(body)), options);
+    return open_internal(monolithic_file(header_xml(body)), std::move(options));
 }
 
 // A unit whose root element holds body, with blocks attached as file_with_attachments() places them.
 unit open_with_blocks(std::string_view body, const std::vector<std::vector<std::byte>>& blocks,
                       openxisf::read_options options = {})
 {
-    return open_internal(file_with_attachments(header_xml(body), blocks), options);
+    return open_internal(file_with_attachments(header_xml(body), blocks), std::move(options));
 }
 
 // The standalone property id of a unit opened without diagnostics.

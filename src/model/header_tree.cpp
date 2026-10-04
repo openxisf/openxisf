@@ -344,8 +344,17 @@ void append_attribute(std::string& output, std::string_view name, std::string_vi
     append_attribute_value(output, value);
 }
 
+// The location of a block that is not inline: attached, or in the data blocks file of a distributed unit.
+std::string location_of(const block_header& block, std::string_view blocks_file)
+{
+    if (blocks_file.empty()) {
+        return format_attachment(block.position, block.size);
+    }
+    return format_relative_location(blocks_file, block.index_id);
+}
+
 void append_element(std::string& output, const xml_element& element, std::span<const block_header> blocks,
-                    std::size_t depth)
+                    std::string_view blocks_file, std::size_t depth)
 {
     append_indentation(output, depth);
     output += '<';
@@ -356,8 +365,7 @@ void append_element(std::string& output, const xml_element& element, std::span<c
     std::string_view text = element.text;
     if (element.block) {
         const block_header& block = blocks[*element.block];
-        append_attribute(output, "location",
-                         block.inline_data ? "inline:base64" : format_attachment(block.position, block.size));
+        append_attribute(output, "location", block.inline_data ? "inline:base64" : location_of(block, blocks_file));
         if (block.compression) {
             append_attribute(output, "compression", format_compression(*block.compression));
             if (!block.compression->subblocks.empty()) {
@@ -381,7 +389,7 @@ void append_element(std::string& output, const xml_element& element, std::span<c
     } else {
         output += '\n';
         for (const xml_element& child : element.children) {
-            append_element(output, child, blocks, depth + 1);
+            append_element(output, child, blocks, blocks_file, depth + 1);
         }
         append_indentation(output, depth);
     }
@@ -428,7 +436,7 @@ std::vector<xml_element> property_elements(std::span<const property> properties)
 }
 
 std::string format_header(const header_tree& tree, std::span<const xml_element> generated,
-                          std::span<const block_header> blocks)
+                          std::span<const block_header> blocks, std::string_view blocks_file)
 {
     std::string text =
         R"(<?xml version="1.0" encoding="UTF-8"?>)"
@@ -441,15 +449,15 @@ std::string format_header(const header_tree& tree, std::span<const xml_element> 
     append_indentation(text, 1);
     text += "<Metadata>\n";
     for (const xml_element& element : generated) {
-        append_element(text, element, blocks, 2);
+        append_element(text, element, blocks, blocks_file, 2);
     }
     for (const xml_element& element : tree.metadata) {
-        append_element(text, element, blocks, 2);
+        append_element(text, element, blocks, blocks_file, 2);
     }
     append_indentation(text, 1);
     text += "</Metadata>\n";
     for (const xml_element& element : tree.body) {
-        append_element(text, element, blocks, 1);
+        append_element(text, element, blocks, blocks_file, 1);
     }
     text += "</xisf>";
     return text;

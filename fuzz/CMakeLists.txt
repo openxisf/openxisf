@@ -66,3 +66,4 @@ openxisf_add_fuzz_target(fuzz_block_attributes SOURCES block_attributes.cpp MIN_
 openxisf_add_fuzz_target(fuzz_codecs SOURCES codecs.cpp MIN_COVERAGE 150)
 openxisf_add_fuzz_target(fuzz_property_text SOURCES property_text.cpp MIN_COVERAGE 400)
 openxisf_add_fuzz_target(fuzz_roundtrip SOURCES roundtrip.cpp MIN_COVERAGE 500)
+openxisf_add_fuzz_target(fuzz_xisb_index SOURCES xisb_index.cpp MIN_COVERAGE 300)

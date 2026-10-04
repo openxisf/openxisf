@@ -3,6 +3,7 @@
 
 #include <openxisf/reader.h>
 
+#include "io/paths.h"
 #include "model/pixels.h"
 #include "model/unit.h"
 
@@ -15,10 +16,25 @@ struct reader::state : detail::unit
     using detail::unit::unit;
 };
 
-reader::reader(std::string_view path, read_options options) : reader(std::make_unique<file_source>(path), options) {}
+namespace {
+
+// A unit opened from a path finds its external files from the directory of that path, unless the options say otherwise.
+read_options with_resolver(read_options options, std::string_view path)
+{
+    if (!options.resolver) {
+        options.resolver = file_resolver(detail::parent_directory(path));
+    }
+    return options;
+}
+
+} // namespace
+
+reader::reader(std::string_view path, read_options options)
+    : reader(std::make_unique<file_source>(path), with_resolver(std::move(options), path))
+{}
 
 reader::reader(std::unique_ptr<input_source> source, read_options options)
-    : state_(std::make_unique<state>(std::move(source), options))
+    : state_(std::make_unique<state>(std::move(source), std::move(options)))
 {}
 
 reader::reader(reader&& other) noexcept = default;

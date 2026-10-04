@@ -5,8 +5,9 @@
 // properties of every type, tables, images of every sample format and storage model with their pixel data, FITS
 // keywords, ICC profiles, working spaces, display functions, colour filter arrays, resolutions and thumbnails; and the
 // options of a writer: codec, shuffling, subblocks, checksum, alignment and the largest inline block. The unit is
-// written to a sink that can rewrite and to one that cannot, and each file must open strictly, without a diagnostic,
-// and hold the model. Any exception escapes and fails the run.
+// written as a monolithic file, or, by the last choice, as a distributed unit, to sinks that can rewrite and to sinks
+// that cannot, and each unit must open strictly, without a diagnostic, and hold the model. Any exception escapes and
+// fails the run.
 
 #include <openxisf/error.h>
 #include <openxisf/image.h>
@@ -467,23 +468,54 @@ template <typename Image> void require_same(Image read, Image written)
     require(read == written);
 }
 
-std::vector<std::byte> write(const openxisf::writer& output, bool rewritable)
+// A sink that keeps what it receives, and can rewrite it or not.
+class kept_output
 {
-    if (rewritable) {
-        openxisf::memory_sink sink;
-        output.save(sink);
-        return sink.release();
+public:
+    explicit kept_output(bool rewritable) : rewritable_(rewritable) {}
+
+    openxisf::output_sink& sink() noexcept
+    {
+        return rewritable_ ? static_cast<openxisf::output_sink&>(memory_) : appended_;
     }
-    std::vector<std::byte> file;
-    openxisf::callback_sink sink(
-        [&file](std::span<const std::byte> data) { file.insert(file.end(), data.begin(), data.end()); });
-    output.save(sink);
-    return file;
+
+    std::vector<std::byte> release()
+    {
+        return rewritable_ ? memory_.release() : std::move(bytes_);
+    }
+
+private:
+    bool rewritable_;
+    openxisf::memory_sink memory_{};
+    std::vector<std::byte> bytes_{};
+    openxisf::callback_sink appended_{
+        [this](std::span<const std::byte> data) { bytes_.insert(bytes_.end(), data.begin(), data.end()); }};
+};
+
+openxisf::reader write_monolithic(const openxisf::writer& output, bool rewritable)
+{
+    kept_output file(rewritable);
+    output.save(file.sink());
+    return openxisf::reader(std::make_unique<openxisf::memory_source>(file.release()), {.strict = true});
 }
 
-void check(const unit_model& model, std::vector<std::byte> file)
+// A header file and its data blocks file, which the resolver of the reader finds.
+openxisf::reader write_distributed(const openxisf::writer& output, bool rewritable)
 {
-    const openxisf::reader unit(std::make_unique<openxisf::memory_source>(std::move(file)), {.strict = true});
+    kept_output header(rewritable);
+    kept_output blocks(rewritable);
+    output.save_distributed(header.sink(), blocks.sink(), "unit.xisb");
+    auto file = std::make_shared<const std::vector<std::byte>>(blocks.release());
+    const openxisf::external_resolver resolver = [file](const openxisf::external_reference& reference) {
+        require(reference.form == openxisf::location_form::relative_path && reference.location == "unit.xisb");
+        return std::make_unique<openxisf::memory_source>(std::span<const std::byte>(*file));
+    };
+    return openxisf::reader(std::make_unique<openxisf::memory_source>(header.release()),
+                            {.strict = true, .resolver = resolver});
+}
+
+void check(const unit_model& model, const openxisf::reader& unit)
+{
     require(unit.diagnostics().empty());
     require(canonical(unit.properties()) == canonical(model.properties));
     require(canonical(std::vector<openxisf::table>(unit.tables().begin(), unit.tables().end())) ==
@@ -508,6 +540,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     choices input(std::span(data, size));
     const openxisf::write_options options = make_options(input);
     const unit_model model = make_model(input);
+    // Last, so that the inputs written before distributed units existed keep their meaning.
+    const bool distributed = input.flag();
 
     openxisf::writer output(options);
     output.metadata() = model.metadata;
@@ -517,7 +551,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         (void)output.add_image(model.images[i], model.pixels[i]);
     }
     for (const bool rewritable : {true, false}) {
-        check(model, write(output, rewritable));
+        check(model, distributed ? write_distributed(output, rewritable) : write_monolithic(output, rewritable));
     }
     return 0;
 }

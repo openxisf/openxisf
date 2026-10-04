@@ -42,13 +42,19 @@ struct read_options
 {
     /// Fail with the error of the first diagnostic of severity::error, instead of opening the unit with that object
     /// unavailable. The exception tells the kind of error: integrity_error for data that fail their checksum,
-    /// unsupported_error for a feature that OpenXISF does not support, such as an unknown compression codec, and
-    /// invalid_data_error for anything else.
+    /// unsupported_error for a feature that OpenXISF does not support, such as an unknown compression codec, or a
+    /// location that the resolver does not allow, limit_error for data beyond a limit, io_error for an external file
+    /// that cannot be opened or read, and invalid_data_error for anything else.
     bool strict = false;
-    /// Read the header alone: leave the ancillary data in data blocks unloaded, so that nothing but the header is read.
-    /// ICC profiles and the pixels of thumbnails stay empty, and the properties and tables with values in data blocks
-    /// are left out, until reader::load_ancillary_data() loads them; the problems of those data are found then.
+    /// Read the header alone: leave the ancillary data in data blocks unloaded, so that nothing but the header is read,
+    /// and for a distributed unit the block indexes of its data blocks files. ICC profiles and the pixels of thumbnails
+    /// stay empty, and the properties and tables with values in data blocks are left out, until
+    /// reader::load_ancillary_data() loads them; the problems of those data are found then.
     bool header_only = false;
+    /// Opens the files of the external data blocks of a distributed unit (spec §10.2). When it is empty, a unit opened
+    /// from a path gets file_resolver() for the directory of that path, with its default options, and a unit opened
+    /// from a source has no external data block available.
+    external_resolver resolver{};
     /// Safety limits for untrusted input.
     openxisf::limits limits{};
 };
@@ -74,7 +80,10 @@ struct pixel_read_options
 ///
 /// The source is recognized by its content: a monolithic file (spec §9.2), or a header file (spec §9.3), which starts
 /// with XML. Opening reads and checks the whole header, including where each data block is and how it is encoded, and
-/// verifies the checksums of the blocks written in the header; attached blocks are verified when they are read. It
+/// verifies the checksums of the blocks written in the header; attached blocks are verified when they are read. The
+/// external data blocks of a header file are located when it is opened: read_options::resolver opens each file once,
+/// and the block index of each data blocks file is read (spec §9.4), so that a block that cannot be found is
+/// unavailable, with a diagnostic; the files stay open as long as the reader exists. It
 /// describes each image and what is associated with it, and loads the ancillary data in data blocks, within
 /// limits::max_ancillary_data: ICC profiles, the pixels of thumbnails, and the values of properties and table cells
 /// (read_options::header_only defers them). Pixel data are read on request, with read_pixels().
@@ -94,8 +103,8 @@ public:
     ///         that leaves the unit without meaning.
     /// @throws unsupported_error when the unit is of an XISF version other than 1.0.
     /// @throws limit_error when the header exceeds one of the limits of options.
-    /// @throws integrity_error, unsupported_error or invalid_data_error with strict options, for the first error
-    ///         diagnostic (see read_options::strict).
+    /// @throws integrity_error, unsupported_error, invalid_data_error, limit_error or io_error with strict options, for
+    ///         the first error diagnostic (see read_options::strict).
     explicit reader(std::string_view path, read_options options = {});
 
     /// Opens the unit in source, with the same exceptions as the other constructor. Exceptions of the source pass

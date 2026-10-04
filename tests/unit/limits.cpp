@@ -23,6 +23,7 @@ TEST(limits, defaults)
     EXPECT_EQ(defaults.max_allocation, 16 * gib);
     EXPECT_EQ(defaults.max_ancillary_data, 256 * mib);
     EXPECT_EQ(defaults.max_index_nodes, 65'536U);
+    EXPECT_EQ(defaults.max_external_files, 256U);
     EXPECT_EQ(defaults.max_zstd_window, 128 * mib);
 }
 

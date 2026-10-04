@@ -8,6 +8,7 @@
 
 #include "codec/compressed_block.h"
 #include "container/block_attributes.h"
+#include "container/blocks_file.h"
 #include "container/file_layout.h"
 #include "core/checked_math.h"
 #include "core/data_encoding.h"
@@ -20,7 +21,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -75,8 +78,8 @@ hash_algorithm algorithm_of(checksum_algorithm value) noexcept
 {
     throw validation_error(errc::header_too_large,
                            "the header would have " + std::to_string(length) +
-                               " bytes, more than the 2^32 - 1 that the header length of a monolithic file can count "
-                               "(spec §9.2)",
+                               " bytes, more than 2^32 - 1, the most that the header length of a monolithic file can "
+                               "count (spec §9.2), and the most that OpenXISF writes in a header file too",
                            {.element = "/xisf"});
 }
 
@@ -213,15 +216,38 @@ private:
     std::uint64_t total_ = 0;
 };
 
+// The position of the first block index element of a data blocks file, after the file header and the node header.
+constexpr std::uint64_t first_index_element = blocks_file_header_size + index_node_header_size;
+
+// Writes a unit: the header and the attached blocks to one sink for a monolithic file, or the header to one sink and
+// the blocks that are not inline to a data blocks file in another, for a distributed unit.
 class unit_writer
 {
 public:
     unit_writer(const unit_contents& unit, const write_options& options, const save_context& context, output_sink& sink)
-        : unit_(unit), options_(options), context_(context), sink_(sink), encoding_(encoding_of(options)),
-          progress_(options.progress)
+        : unit_(unit), options_(options), context_(context), sink_(sink), blocks_(sink),
+          encoding_(encoding_of(options)), progress_(options.progress)
+    {}
+
+    unit_writer(const unit_contents& unit, const write_options& options, const save_context& context,
+                output_sink& header, output_sink& blocks, std::string_view blocks_name, xoshiro256starstar ids)
+        : unit_(unit), options_(options), context_(context), sink_(header), blocks_(blocks), blocks_name_(blocks_name),
+          ids_(ids), encoding_(encoding_of(options)), progress_(options.progress)
     {}
 
     void write()
+    {
+        const std::uint64_t total = prepare();
+        if (blocks_name_.empty()) {
+            write_monolithic(total);
+        } else {
+            write_distributed(total);
+        }
+    }
+
+private:
+    // Builds the header and encodes the inline blocks. Returns the bytes of the attached blocks before compression.
+    std::uint64_t prepare()
     {
         tree_ = build_header_tree(unit_, options_, context_.uuids);
         headers_.resize(tree_.blocks.size());
@@ -237,12 +263,21 @@ public:
                 total = checked_add(total, headers_[i].size);
             }
         }
+        return total;
+    }
 
-        const bool encoded = (encoding_.codec || encoding_.checksum) && !attached_.empty();
-        if (encoded && sink_.can_rewrite()) {
+    // True when the attached blocks are compressed or hashed, so that their sizes or digests are known once written.
+    [[nodiscard]] bool encoded() const noexcept
+    {
+        return (encoding_.codec || encoding_.checksum) && !attached_.empty();
+    }
+
+    void write_monolithic(std::uint64_t total)
+    {
+        if (encoded() && sink_.can_rewrite()) {
             progress_.start(total);
             write_streamed();
-        } else if (encoded) {
+        } else if (encoded()) {
             progress_.start(checked_multiply(total, std::uint64_t{2}));
             encode_attached();
             write_in_order();
@@ -253,7 +288,87 @@ public:
         sink_.finish();
     }
 
-private:
+    // A distributed unit (spec §9.1.2): the data blocks file first, whose index has a known size, so that the places of
+    // the blocks are known before they are written, then the header file, which lists them. Both are written
+    // completely before either is finished, and the data blocks file is finished first, so that a header file never
+    // names blocks that are not there yet.
+    void write_distributed(std::uint64_t total)
+    {
+        if (attached_.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw validation_error(errc::header_too_large,
+                                   "a data blocks file of one index node holds at most 2^32 - 1 blocks, and the unit "
+                                   "has " +
+                                       std::to_string(attached_.size()),
+                                   {.element = "/xisf"});
+        }
+        const std::uint64_t index_end = first_index_element + (attached_.size() * index_element_size);
+        if (encoded() && blocks_.can_rewrite()) {
+            progress_.start(total);
+            write_zeros(blocks_, index_end);
+            for (const std::size_t i : attached_) {
+                write_zeros(blocks_, aligned(blocks_.position(), options_.block_alignment) - blocks_.position());
+                stream_block(i);
+            }
+            assign_index_ids();
+            blocks_.rewrite(0, blocks_file_start());
+        } else {
+            if (encoded()) {
+                progress_.start(checked_multiply(total, std::uint64_t{2}));
+                encode_attached();
+            } else {
+                progress_.start(total);
+            }
+            place_attached(index_end);
+            assign_index_ids();
+            blocks_.write(blocks_file_start());
+            write_attached();
+        }
+        sink_.write(bytes_of(format()));
+        blocks_.finish();
+        sink_.finish();
+    }
+
+    // Each block in the data blocks file gets an identifier of its own (spec §9.4).
+    void assign_index_ids()
+    {
+        if (!ids_) {
+            return;
+        }
+        xoshiro256starstar& ids = *ids_;
+        std::unordered_set<std::uint64_t> used;
+        for (const std::size_t i : attached_) {
+            std::uint64_t id = ids();
+            while (!used.insert(id).second) {
+                id = ids();
+            }
+            headers_[i].index_id = id;
+        }
+    }
+
+    // The signature and reserved field of the data blocks file, then its block index: one node, with an element for
+    // each attached block (spec §9.4).
+    std::vector<std::byte> blocks_file_start() const
+    {
+        std::vector<std::byte> bytes(first_index_element + (attached_.size() * index_element_size));
+        for (std::size_t i = 0; i < blocks_file_signature.size(); ++i) {
+            bytes[i] = static_cast<std::byte>(blocks_file_signature[i]);
+        }
+        const std::span<std::byte> data(bytes);
+        store_little_endian(data.subspan<blocks_file_header_size, 4>(), static_cast<std::uint32_t>(attached_.size()));
+        std::size_t offset = first_index_element;
+        for (const std::size_t i : attached_) {
+            const block_header& header = headers_[i];
+            const std::uint64_t uncompressed = header.compression ? header.compression->uncompressed_size : 0;
+            for (const std::uint64_t value : {header.index_id, header.position, header.size, uncompressed}) {
+                store_little_endian(data.subspan(offset).first<sizeof(std::uint64_t)>(), value);
+                offset += sizeof(std::uint64_t);
+            }
+            // The reserved field stays zero.
+            offset += sizeof(std::uint64_t);
+        }
+        return bytes;
+    }
+
     // The subblocks of a block are listed in the header, so a very small subblock size could make it far too long. The
     // shortest description of a subblock, "1,1:", has four characters.
     void check_subblock_count(const block_source& block) const
@@ -271,7 +386,7 @@ private:
 
     std::string format() const
     {
-        std::string text = format_header(tree_, property_elements(generated_metadata()), headers_);
+        std::string text = format_header(tree_, property_elements(generated_metadata()), headers_, blocks_name_);
         if (text.size() > max_header_length) {
             throw_header_too_large(text.size());
         }
@@ -289,7 +404,10 @@ private:
         if (const std::string_view os = creator_os(); !os.empty()) {
             metadata.push_back({.id = "XISF:CreatorOS", .value = os});
         }
-        metadata.push_back({.id = "XISF:BlockAlignmentSize", .value = options_.block_alignment});
+        // Spec §11.4.2: the alignment of attached blocks, which only a monolithic file has.
+        if (blocks_name_.empty()) {
+            metadata.push_back({.id = "XISF:BlockAlignmentSize", .value = options_.block_alignment});
+        }
         metadata.push_back({.id = "XISF:MaxInlineBlockSize", .value = options_.max_inline_block_size});
 
         std::string codecs;
@@ -316,10 +434,10 @@ private:
         return metadata;
     }
 
-    // Sets the positions of the attached blocks, which follow a header of the given length.
-    void place_attached(std::uint64_t header_length)
+    // Sets the positions of the attached blocks, which follow the byte at start.
+    void place_attached(std::uint64_t start)
     {
-        std::uint64_t position = aligned(monolithic_header_offset + header_length, options_.block_alignment);
+        std::uint64_t position = aligned(start, options_.block_alignment);
         for (const std::size_t i : attached_) {
             position = aligned(position, options_.block_alignment);
             headers_[i].position = position;
@@ -386,7 +504,7 @@ private:
         std::uint64_t length = 0;
         std::string text;
         while (true) {
-            place_attached(length);
+            place_attached(monolithic_header_offset + length);
             text = format();
             if (text.size() <= length) {
                 break;
@@ -396,12 +514,18 @@ private:
 
         sink_.write(preamble(text.size()));
         sink_.write(bytes_of(text));
+        write_attached();
+    }
+
+    // The attached blocks at their places, after what the sink of the blocks holds, with zeros in between.
+    void write_attached()
+    {
         for (const std::size_t i : attached_) {
-            write_zeros(sink_, headers_[i].position - sink_.position());
+            write_zeros(blocks_, headers_[i].position - blocks_.position());
             const std::span<const std::byte> stored =
                 buffers_[i].empty() ? tree_.blocks[i].data() : std::span<const std::byte>(buffers_[i]);
             for (std::size_t offset = 0; offset < stored.size(); offset += piece_size) {
-                sink_.write(stored.subspan(offset, std::min(piece_size, stored.size() - offset)));
+                blocks_.write(stored.subspan(offset, std::min(piece_size, stored.size() - offset)));
                 if (buffers_[i].empty()) {
                     progress_.advance(std::min(piece_size, stored.size() - offset));
                 }
@@ -457,12 +581,13 @@ private:
         return header;
     }
 
+    // Writes a block to the sink of the blocks, compressed and hashed subblock by subblock.
     void stream_block(std::size_t index)
     {
         block_header& header = headers_[index];
         const block_source& block = tree_.blocks[index];
         const std::span<const std::byte> data = block.data();
-        header = {.position = sink_.position(), .size = data.size()};
+        header = {.position = blocks_.position(), .size = data.size()};
         std::optional<hasher> hash;
         if (encoding_.checksum) {
             hash.emplace(*encoding_.checksum);
@@ -473,7 +598,7 @@ private:
             const block_compression compression =
                 compress_subblocks(data, compression_for(*encoding_.codec, encoding_, block),
                                    [&](std::span<const std::byte> part, const subblock& sizes) {
-                                       sink_.write(part);
+                                       blocks_.write(part);
                                        stored += part.size();
                                        if (hash) {
                                            hash->update(part);
@@ -491,8 +616,8 @@ private:
             // The block does not get smaller, so each subblock holds its data as they are, shuffled; the data replace
             // them.
             for (std::size_t offset = 0; offset < data.size(); offset += piece_size) {
-                sink_.rewrite(header.position + offset,
-                              data.subspan(offset, std::min(piece_size, data.size() - offset)));
+                blocks_.rewrite(header.position + offset,
+                                data.subspan(offset, std::min(piece_size, data.size() - offset)));
             }
             if (encoding_.checksum) {
                 header.checksum = checksum_of(*encoding_.checksum, data);
@@ -502,7 +627,7 @@ private:
 
         for (std::size_t offset = 0; offset < data.size(); offset += piece_size) {
             const std::span<const std::byte> piece = data.subspan(offset, std::min(piece_size, data.size() - offset));
-            sink_.write(piece);
+            blocks_.write(piece);
             if (hash) {
                 hash->update(piece);
             }
@@ -516,7 +641,14 @@ private:
     const unit_contents& unit_;
     const write_options& options_;
     const save_context& context_;
+    // The sink of the header, and of the attached blocks of a monolithic file.
     output_sink& sink_;
+    // The sink of the attached blocks: sink_, or the data blocks file of a distributed unit.
+    output_sink& blocks_;
+    // For a distributed unit, the path of the data blocks file from the directory of the header file, and the
+    // generator of the identifiers of its block index elements.
+    std::string_view blocks_name_{};
+    std::optional<xoshiro256starstar> ids_{};
     block_encoding_options encoding_;
     progress_counter progress_;
     header_tree tree_{};
@@ -555,6 +687,13 @@ std::optional<int> reported_compression_level(compression_codec codec, int level
 void write_unit(const unit_contents& unit, const write_options& options, const save_context& context, output_sink& sink)
 {
     unit_writer(unit, options, context, sink).write();
+}
+
+void write_distributed_unit(const unit_contents& unit, const write_options& options, const save_context& context,
+                            output_sink& header, output_sink& blocks, std::string_view blocks_name,
+                            xoshiro256starstar ids)
+{
+    unit_writer(unit, options, context, header, blocks, blocks_name, ids).write();
 }
 
 } // namespace openxisf::detail

@@ -59,8 +59,8 @@ enum class errc
     chained_reference,       ///< A Reference element names another Reference element.
     signature_not_verified,  ///< The unit has an XML signature, which OpenXISF does not verify.
     invalid_location,        ///< A data block location that is not of a form of spec §10.3, or not allowed where it is.
-    unsupported_location,    ///< A data block at a location that OpenXISF does not read, such as an external block.
-    block_out_of_bounds,     ///< An attached data block extends beyond the end of its file, or into its header.
+    unsupported_location,    ///< A data block at a location that no resolver opens, such as a URL by default.
+    block_out_of_bounds,     ///< A data block extends beyond the end of its file, or into the header of the file.
     invalid_byte_order,      ///< A byteOrder attribute that is neither big nor little (spec §10.4).
     invalid_checksum,        ///< A checksum attribute that is not of the form of spec §10.5.
     unsupported_checksum,    ///< A checksum computed with a hashing algorithm that OpenXISF does not implement.
@@ -101,6 +101,13 @@ enum class errc
     invalid_table,     ///< A Table, Structure, Field, Row or Cell element that breaks the rules of spec §11.2 or §11.3.
     duplicate_element, ///< An image has a second element of a kind it can have once, such as a second ICC profile.
     invalid_character, ///< Text holds a character that an XML header cannot hold, such as a control character.
+    invalid_blocks_file,     ///< A data blocks file without its signature, or with a malformed block index (spec §9.4).
+    too_many_index_nodes,    ///< The block index of a data blocks file has more nodes than limits::max_index_nodes.
+    index_id_not_found,      ///< No block index element of a data blocks file points to a block with this identifier.
+    duplicate_index_id,      ///< Several block index elements of a data blocks file have the identifier of a location.
+    invalid_index_element,   ///< A block index element whose uncompressed length disagrees with the header.
+    too_many_external_files, ///< A unit names more external files than limits::max_external_files.
+    location_not_allowed,    ///< A location that a resolver refuses, such as a path that leaves the header's directory.
 };
 
 /// Where in a unit a problem was found. Empty or absent members are unknown or do not apply.

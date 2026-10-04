@@ -15,7 +15,9 @@ set(internal_sources
     codec/zlib_codec.cpp
     codec/zstd_codec.cpp
     container/block_attributes.cpp
+    container/blocks_file.cpp
     container/data_block.cpp
+    container/external_blocks.cpp
     container/file_layout.cpp
     container/unit_writer.cpp
     core/checked_math.cpp
@@ -33,6 +35,7 @@ set(internal_sources
     crypto/sha1.cpp
     crypto/sha2.cpp
     crypto/sha3.cpp
+    io/paths.cpp
     io/range_check.cpp
     io/thread_safe_source.cpp
     model/ancillary.cpp
@@ -75,6 +78,7 @@ set(public_sources
     writer.cpp
     io/callback.cpp
     io/file.cpp
+    io/file_resolver.cpp
     io/interfaces.cpp
     io/memory.cpp)
 

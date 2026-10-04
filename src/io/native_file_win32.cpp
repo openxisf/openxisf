@@ -178,6 +178,46 @@ std::optional<native_file> native_file::create_new(const std::string& path, std:
     return native_file(handle, std::move(name));
 }
 
+std::string native_file::canonical_path(const std::string& path)
+{
+    const std::wstring wide = system_path(path);
+    if (wide.empty()) {
+        fail(errc::open_failed, "cannot find " + path, last_error());
+    }
+    // A handle without access to the content only names the file; backup semantics let it name a directory too.
+    // Symbolic links and junctions are followed.
+    HANDLE handle = CreateFileW(wide.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        fail(errc::open_failed, "cannot find " + path, last_error());
+    }
+    const native_file opened(handle, path);
+    if (GetFileType(handle) != FILE_TYPE_DISK) {
+        fail_not_regular(path);
+    }
+
+    // The name of the volume as a drive letter, or as a volume GUID for a volume without one.
+    std::wstring final_path(MAX_PATH, L'\0');
+    for (const DWORD volume : {DWORD{VOLUME_NAME_DOS}, DWORD{VOLUME_NAME_GUID}}) {
+        DWORD length = GetFinalPathNameByHandleW(handle, final_path.data(), static_cast<DWORD>(final_path.size()),
+                                                 FILE_NAME_NORMALIZED | volume);
+        if (length >= final_path.size()) {
+            final_path.resize(length);
+            length = GetFinalPathNameByHandleW(handle, final_path.data(), static_cast<DWORD>(final_path.size()),
+                                               FILE_NAME_NORMALIZED | volume);
+        }
+        if (length != 0 && length < final_path.size()) {
+            final_path.resize(length);
+            try {
+                return utf16_to_utf8(std::u16string(final_path.begin(), final_path.end()));
+            } catch (const invalid_data_error&) {
+                throw io_error(errc::open_failed, "the canonical path of " + path + " is not valid UTF-16");
+            }
+        }
+    }
+    fail(errc::open_failed, "cannot resolve " + path, last_error());
+}
+
 std::uint64_t native_file::size() const
 {
     LARGE_INTEGER size{};

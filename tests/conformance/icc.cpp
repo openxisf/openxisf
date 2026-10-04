@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -50,13 +51,14 @@ std::vector<std::byte> profile_bytes()
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
 {
-    return openxisf::test::open_header(header_xml(body), options);
+    return openxisf::test::open_header(header_xml(body), std::move(options));
 }
 
 reader open_attached(std::string_view body, const std::vector<std::vector<std::byte>>& blocks,
                      openxisf::read_options options = {})
 {
-    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks), options);
+    return openxisf::test::open_unit(openxisf::test::file_with_attachments(header_xml(body), blocks),
+                                     std::move(options));
 }
 
 std::string inline_profile()

@@ -38,6 +38,21 @@ enum class location_kind : std::uint8_t
     path,        ///< path(file-path) or path(file-path):index-id, a local file.
 };
 
+/// True for the locations of external blocks, url() and path() (spec §10.2).
+[[nodiscard]] constexpr bool is_external(location_kind kind) noexcept
+{
+    return kind == location_kind::url || kind == location_kind::path;
+}
+
+/// True for the blocks stored apart from the header, attached or external, whose place the location gives.
+[[nodiscard]] constexpr bool is_stored_apart(location_kind kind) noexcept
+{
+    return kind == location_kind::attachment || is_external(kind);
+}
+
+/// What starts a path from the directory of the header file (spec §10.3).
+inline constexpr std::string_view header_directory_prefix = "@header_dir/";
+
 /// The value of a location attribute.
 struct block_location
 {
@@ -102,6 +117,13 @@ struct block_checksum
 
 /// The location of an attached block, attachment:position:size.
 [[nodiscard]] std::string format_attachment(std::uint64_t position, std::uint64_t size);
+
+/// An index-id in hexadecimal, as the specification recommends: 0x and 16 lowercase digits.
+[[nodiscard]] std::string format_index_id(std::uint64_t id);
+
+/// The location of a block in a data blocks file, by its path from the directory of the header file:
+/// path(@header_dir/path):index-id.
+[[nodiscard]] std::string format_relative_location(std::string_view path, std::uint64_t id);
 
 /// The name of an algorithm in a checksum attribute: the alternate names sha1, sha256 and sha512, which PixInsight
 /// writes, and sha3-256 and sha3-512, which have none.

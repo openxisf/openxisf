@@ -26,7 +26,7 @@ namespace openxisf::detail {
 struct unit
 {
     /// Opens the unit in input. Throws what the constructors of reader document.
-    unit(std::unique_ptr<input_source> input, const read_options& requested);
+    unit(std::unique_ptr<input_source> input, read_options requested);
 
     /// Opens the unit again from its source with the ancillary data loaded, as reader::load_ancillary_data() documents.
     /// The unit is unchanged when it throws.

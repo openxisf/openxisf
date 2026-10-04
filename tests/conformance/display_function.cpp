@@ -16,6 +16,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -35,7 +36,7 @@ constexpr std::string_view example = R"(m="0.000735:0.000735:0.000735:0.5" s="0.
 reader open_function(std::string_view attributes, openxisf::read_options options = {})
 {
     return openxisf::test::open_header(header_xml(image_xml({}, "<DisplayFunction " + std::string(attributes) + "/>")),
-                                       options);
+                                       std::move(options));
 }
 
 testing::AssertionResult unavailable(const reader& file)

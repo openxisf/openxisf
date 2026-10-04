@@ -3,6 +3,7 @@
 
 #include "model/unit.h"
 
+#include "container/external_blocks.h"
 #include "container/file_layout.h"
 #include "core/diagnostic_log.h"
 #include "model/ancillary.h"
@@ -29,8 +30,8 @@ parsed_header read_header(const thread_safe_source& source, const limits& limits
 
 } // namespace
 
-unit::unit(std::unique_ptr<input_source> input, const read_options& requested)
-    : source(std::move(input)), options(requested), limits(requested.limits)
+unit::unit(std::unique_ptr<input_source> input, read_options requested)
+    : source(std::move(input)), options(std::move(requested)), limits(options.limits)
 {
     open(!options.header_only);
 }
@@ -50,6 +51,9 @@ void unit::open(bool load_ancillary)
     // The walk reports the problems of the element structure. The objects of the unit are read from the outline.
     const unit_outline outline = build_outline(header.root, log);
     std::vector<data_block> described = describe_blocks(outline, context, log);
+    if (context.storage == unit_storage::distributed) {
+        locate_external_blocks(described, options.resolver, limits, log);
+    }
     ancillary_budget budget(limits.max_ancillary_data);
     value_reader values(source, limits, budget, load_ancillary, log);
     unit_objects objects{.properties = read_properties(outline, described, values, budget, log),

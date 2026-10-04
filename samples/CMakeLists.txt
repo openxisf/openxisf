@@ -29,6 +29,7 @@ endfunction()
 set(sample_data "${PROJECT_SOURCE_DIR}/tests/data/pixinsight")
 
 openxisf_add_sample(custom_io)
+openxisf_add_sample(distributed "${CMAKE_CURRENT_BINARY_DIR}/distributed.xish")
 openxisf_add_sample(read_info "${sample_data}/d1-rich-rgb.xisf")
 openxisf_add_sample(read_pixels "${sample_data}/a4-rgb-f32.xisf")
 openxisf_add_sample(stream_io "${sample_data}/a6-rgba-u16.xisf")

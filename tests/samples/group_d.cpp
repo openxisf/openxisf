@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -40,7 +41,7 @@ using openxisf::property_value;
 
 openxisf::reader open_sample(std::string_view id, openxisf::read_options options = {.strict = true})
 {
-    return openxisf::reader(openxisf::test::sample_path(openxisf::test::sample_by_id(id)), options);
+    return openxisf::reader(openxisf::test::sample_path(openxisf::test::sample_by_id(id)), std::move(options));
 }
 
 // The samples of an image read from a sample are those of the pattern image of the samples, computed in double

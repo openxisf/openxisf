@@ -163,15 +163,12 @@ private:
         if (!location) {
             return false;
         }
-        const bool external = location->kind == location_kind::url || location->kind == location_kind::path;
+        const bool external = is_external(location->kind);
         if (location->kind == location_kind::attachment && context_.storage == unit_storage::distributed) {
             return fail(errc::invalid_location, "a header file cannot have attached data blocks", context);
         }
         if (external && context_.storage == unit_storage::monolithic) {
             return fail(errc::invalid_location, "a monolithic file cannot have external data blocks", context);
-        }
-        if (external) {
-            return fail(errc::unsupported_location, "external data blocks are not supported", context);
         }
         descriptor_.location = *location;
         return true;
@@ -309,6 +306,7 @@ private:
             return decode_embedded();
         case location_kind::url:
         case location_kind::path:
+            // Its file and its place in it are found once every block is described (locate_external_blocks()).
             break;
         }
         return true;
@@ -392,7 +390,8 @@ private:
     // its codec (spec §10.6). A block without subblocks is one subblock.
     bool check_subblocks()
     {
-        if (!descriptor_.compression) {
+        // The stored size of an external block is known once it is located.
+        if (!descriptor_.compression || is_external(descriptor_.location.kind)) {
             return true;
         }
         const block_compression& compression = *descriptor_.compression;
@@ -402,11 +401,11 @@ private:
         return attempt([&compression, stored] { return subblocks_of(compression, stored); }, context).has_value();
     }
 
-    // The bytes of an inline or embedded block are at hand, so they are verified now (spec §10.5); an attached block
-    // is verified when it is read.
+    // The bytes of an inline or embedded block are at hand, so they are verified now (spec §10.5); an attached or
+    // external block is verified when it is read.
     bool verify()
     {
-        if (!descriptor_.checksum || descriptor_.location.kind == location_kind::attachment) {
+        if (!descriptor_.checksum || is_stored_apart(descriptor_.location.kind)) {
             return true;
         }
         const block_checksum& checksum = *descriptor_.checksum;
@@ -439,19 +438,18 @@ private:
 std::vector<std::byte> read_stored_bytes(const thread_safe_source& source, const block_descriptor& descriptor,
                                          const limits& limits, const block_progress& progress, std::size_t piece_size)
 {
-    switch (descriptor.location.kind) {
-    case location_kind::inline_data:
-    case location_kind::embedded:
+    if (!is_stored_apart(descriptor.location.kind)) {
         if (progress) {
             progress(descriptor.data.size());
         }
         return descriptor.data;
-    case location_kind::attachment:
-        break;
-    case location_kind::url:
-    case location_kind::path:
-        throw unsupported_error(errc::unsupported_location, "external data blocks are not supported");
     }
+    // An external block is in its own file.
+    const bool external = is_external(descriptor.location.kind);
+    if (external && !descriptor.external) {
+        throw unsupported_error(errc::unsupported_location, "the external data block has not been located");
+    }
+    const thread_safe_source& file = external ? *descriptor.external : source;
 
     const std::uint64_t size = descriptor.location.size;
     if (limits.max_allocation != 0 && size > limits.max_allocation) {
@@ -461,11 +459,11 @@ std::vector<std::byte> read_stored_bytes(const thread_safe_source& source, const
     }
     std::vector<std::byte> data(checked_cast<std::size_t>(size));
     if (!progress) {
-        source.read(descriptor.location.position, data);
+        file.read(descriptor.location.position, data);
     } else {
         for (std::size_t done = 0; done < data.size();) {
             const std::size_t piece = std::min(std::max<std::size_t>(piece_size, 1), data.size() - done);
-            source.read(descriptor.location.position + done, std::span(data).subspan(done, piece));
+            file.read(descriptor.location.position + done, std::span(data).subspan(done, piece));
             done += piece;
             progress(done);
         }
@@ -559,7 +557,7 @@ std::vector<std::byte> read_block_data(const thread_safe_source& source, const b
 
 std::uint64_t stored_size(const block_descriptor& descriptor) noexcept
 {
-    return descriptor.location.kind == location_kind::attachment ? descriptor.location.size : descriptor.data.size();
+    return is_stored_apart(descriptor.location.kind) ? descriptor.location.size : descriptor.data.size();
 }
 
 std::uint64_t data_size(const block_descriptor& descriptor) noexcept

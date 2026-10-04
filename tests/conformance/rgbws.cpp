@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -39,7 +40,7 @@ constexpr std::string_view srgb = R"(x="0.648431:0.321152:0.155886" y="0.330856:
 reader open_space(std::string_view attributes, openxisf::read_options options = {})
 {
     return openxisf::test::open_header(header_xml(image_xml({}, "<RGBWorkingSpace " + std::string(attributes) + "/>")),
-                                       options);
+                                       std::move(options));
 }
 
 // The only diagnostic is an error with code about the RGBWorkingSpace element, and the image has no working space.
