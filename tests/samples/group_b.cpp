@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The samples of group B: the pattern images of samples A4, A2 and A5, compressed by PixInsight with every codec and at
 // every item size of byte shuffling that their sample formats have (spec §10.6). Decompressed, each image is byte for

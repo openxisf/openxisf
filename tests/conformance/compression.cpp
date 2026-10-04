@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §10.6: compressed data blocks in units, in every location, with subblocks, and verified before they are
 // decompressed (spec §10.6.1). The codecs themselves are tested in unit/codecs.cpp and unit/compressed_block.cpp.

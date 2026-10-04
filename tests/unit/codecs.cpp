@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The codec adapters, one subblock at a time (spec §10.6.3 to §10.6.10): each decoder fills its output exactly from all
 // of its input, or fails with corrupt_compressed_data. Round trips of every codec are in compressed_block.cpp; here the

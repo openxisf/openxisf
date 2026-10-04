@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §9.5: a detached XML signature after the root element, on constructed units. Signatures are read, never
 // verified.

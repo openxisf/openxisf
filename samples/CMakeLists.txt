@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # The sample programs. They use the public API only, like an application, and each one runs as a test with the label
 # example. The arguments after the name are the arguments of its test.

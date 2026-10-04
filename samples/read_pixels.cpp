@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Reads the pixels of the first image of a unit into memory that the application owns, interleaved (the normal storage
 // model, the samples of each pixel together), while a progress function reports how far the read is, and computes the

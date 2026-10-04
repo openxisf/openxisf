@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §8.4.4.7, §11.2 and §11.3: Structure, Field, Table, Row and Cell elements, on constructed units.
 

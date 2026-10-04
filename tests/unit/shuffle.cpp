@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Byte shuffling (spec §10.6.2), against the order that the specification defines: byte j of item i of n items moves
 // to j * n + i, and the bytes after the last complete item stay where they are.

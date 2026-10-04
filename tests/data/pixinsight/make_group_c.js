@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 //
 // Writes the samples of group C with PixInsight: the 37 x 23 pattern image of sample A2 (Gray, UInt16), saved with
 // block checksums, and once with Zstandard compression and byte shuffling as well. The XISF module of PixInsight 1.9.4

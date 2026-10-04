@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The public types of property values: how C++ values map to property types (spec §8.4.4), the checked accessors, and
 // the lists of properties of an object (spec §8.4.1).

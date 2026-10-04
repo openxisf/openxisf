@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 //
 // Writes the optional large sample L1 with PixInsight: an RGB Float32 image of 22000 x 17000 pixels (4.18 GiB), above
 // the 4 GiB that zlib compresses at once, saved with zlib, so that PixInsight divides it into subblocks of its own

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Property values in data blocks (spec §11.1.6, §11.1.8, §11.1.9): the elements of vectors and matrices in both byte
 // orders (spec §10.4), and String values as UTF-8.

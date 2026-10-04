@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # Applies OPENXISF_SANITIZE ("address;undefined", "thread" or "fuzzer;address;undefined") to a target. Flags are
 # PRIVATE, and a static library does not carry them to its consumers, so every executable calls this itself.

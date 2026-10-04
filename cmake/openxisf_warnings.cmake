@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # Warning, language and hardening flags for the targets of this project. Every flag is PRIVATE, so
 # nothing is imposed on consumers of the library.

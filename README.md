@@ -5,9 +5,10 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: under development, not ready for use.** `openxisf::reader` reads monolithic units: it checks their header
+**Status: 0.1.0, an early release.** It reads monolithic units; writing, distributed units and the algorithms of the
+specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a unit
 (the file structure, the XML, the root element, the elements of the specification and the references between them) and
-their data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with SHA-1,
+its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with SHA-1,
 SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its images and
 the standalone ones, with values of every type of the specification, and tables; its images: their geometry, sample
 format, colour space and other attributes, and their pixel data, decompressed and in native byte order, in either
@@ -218,7 +219,9 @@ are checked continuously by fuzzing, sanitizers and static analysis.
   that once broke a target becomes a seed.
 - Write plain code: classes and free functions, templates only where they remove real duplication. The naming follows
   the standard library: `snake_case` everywhere, lowercase enumerators, a trailing `_` on private members.
-- Public headers carry short Doxygen comments. Every source file starts with the SPDX header you see in the existing ones.
+- Public headers carry short Doxygen comments. Every source file starts with an SPDX header, as the existing ones do;
+  a file you create names you in its `SPDX-FileCopyrightText` line, and a file you change substantially can get a line
+  of its own for you.
 - Format with clang-format 22 and check with clang-tidy 22 (`pip install clang-format==22.1.3 clang-tidy==22.1.8`).
   Both run in CI.
 - Sign off your commits to certify the [Developer Certificate of Origin](https://developercertificate.org/):
@@ -227,6 +230,11 @@ are checked continuously by fuzzing, sanitizers and static analysis.
   Library.
 - A pull request needs a green CI: every platform builds with warnings as errors, and the tests pass, also under the
   sanitizers.
+
+## Author
+
+OpenXISF is written and maintained by Ezequiel Ruiz. Contributors are credited in the history of the repository and in
+the SPDX headers of the files they wrote.
 
 ## License
 

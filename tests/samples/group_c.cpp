@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The samples of group C: the image of sample A2 with the block checksums that PixInsight writes (spec §10.5), once
 // with compression (spec §10.6.1).

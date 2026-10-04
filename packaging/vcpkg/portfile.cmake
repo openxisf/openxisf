@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+# SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 # Overlay port that builds the checkout it lives in, so CI can prove that the library builds as a vcpkg
 # port. The port submitted to the vcpkg registry differs only in fetching a tagged release with

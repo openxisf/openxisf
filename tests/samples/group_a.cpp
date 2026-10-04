@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The samples of group A: the pattern image of make_group_a.js, written by PixInsight in each sample format and colour
 // space of the group. Their pixels are compared with the expressions that created them, within one unit of the last

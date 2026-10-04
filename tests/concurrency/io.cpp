@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Reads from 16 threads at once, on sources that support concurrent reads and on sources that the library serializes.
 // ThreadSanitizer runs these tests in CI.

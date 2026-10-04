@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The command-line arguments of the sample programs in UTF-8, the text encoding of the OpenXISF API on every platform.
 // On Windows, main() receives them in the ANSI code page, which cannot represent every character of a file name, so

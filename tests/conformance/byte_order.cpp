@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §10.4: the byte order of data blocks, on constructed units: recorded with the block, and applied to the samples
 // of images when their pixels are read.

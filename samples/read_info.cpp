@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Lists what a unit holds: how it is stored, its metadata, its standalone properties and tables, its images with their
 // attributes, properties, tables, FITS keywords and the elements that describe them, and the problems the reader found

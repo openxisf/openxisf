@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Spec §10.5 and §10.6.1: the checksums of data blocks, verified before a block is used. On constructed units whose
 // blocks hold "abc", with the digests of the NIST examples.

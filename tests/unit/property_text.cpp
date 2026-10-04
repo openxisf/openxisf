@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Properties as text: identifiers (spec §8.4.1), and the value attributes of scalars (spec §11.1.4), complex numbers
 // (spec §11.1.5) and TimePoints (spec §11.1.7), with the range of each declared type.

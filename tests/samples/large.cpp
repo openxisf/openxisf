@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 The OpenXISF Authors
+// SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The large samples, which are not versioned: the tests find them in the directory that the environment variable
 // OPENXISF_LARGE_SAMPLES_DIR names, and skip without it. L1 is an RGB Float32 image above 4 GiB that PixInsight
