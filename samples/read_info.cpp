@@ -16,8 +16,8 @@
 
 #include <array>
 #include <charconv>
-#include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <iostream>
@@ -26,7 +26,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <variant>
 #include <vector>
 
 namespace {
@@ -43,47 +42,32 @@ template <typename T> std::string number(T value)
     }
 }
 
-std::string two_digits(unsigned int value)
+// A value as text, with the format specifier of its property (spec §8.4.3): long strings cut, and only the first
+// elements of long vectors and matrices.
+std::string describe(const openxisf::property& item)
 {
-    return (value < 10 ? "0" : "") + std::to_string(value);
-}
-
-// A value, briefly: scalars and strings as they are (long strings cut), vectors and matrices by their size.
-std::string describe(const openxisf::property_value& value)
-{
-    return std::visit(
-        [&value]<typename T>(const T& held) -> std::string {
-            if constexpr (std::is_same_v<T, std::string>) {
-                // Float128 and Complex128 scalars are held as their text.
-                if (value.type() != openxisf::property_type::string) {
-                    return held;
-                }
-                return '"' + (held.size() <= 60 ? held : held.substr(0, 57) + "...") + '"';
-            } else if constexpr (std::is_same_v<T, bool>) {
-                return held ? "true" : "false";
-            } else if constexpr (std::is_arithmetic_v<T>) {
-                return number(held);
-            } else if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
-                return "(" + number(held.real()) + ", " + number(held.imag()) + ")";
-            } else if constexpr (std::is_same_v<T, openxisf::date_time>) {
-                return std::to_string(held.year) + "-" + two_digits(held.month) + "-" + two_digits(held.day) + "T" +
-                       two_digits(held.hour) + ":" + two_digits(held.minute) + ":" + two_digits(held.second) + "Z";
-            } else if constexpr (std::is_same_v<T, openxisf::int128> || std::is_same_v<T, openxisf::uint128>) {
-                return "a 128-bit integer";
-            } else if (value.rows() != 0 || value.columns() != 0) {
-                return std::to_string(value.rows()) + " x " + std::to_string(value.columns()) + " matrix";
-            } else {
-                return std::to_string(value.length()) + " elements";
-            }
-        },
-        value.data());
+    const openxisf::property_format format = item.format.value_or(openxisf::property_format{});
+    const openxisf::property_value& value = item.value;
+    if (value.type() == openxisf::property_type::string) {
+        const std::string text = openxisf::format_value(value, format);
+        return '"' + (text.size() <= 60 ? text : text.substr(0, 57) + "...") + '"';
+    }
+    if (value.length() > 6) {
+        std::string text;
+        for (std::uint64_t i = 0; i < 4; ++i) {
+            text += openxisf::format_element(value, i, format) + ",";
+        }
+        return text + "... (" + std::to_string(value.length()) + " elements)";
+    }
+    const std::string text = openxisf::format_value(value, format);
+    return text.empty() ? "(empty)" : text;
 }
 
 void list_properties(const openxisf::property_list& properties, std::string_view indent)
 {
     for (const openxisf::property& item : properties) {
         std::cout << indent << item.id << " (" << openxisf::property_type_name(item.value.type())
-                  << "): " << describe(item.value) << '\n';
+                  << "): " << describe(item) << '\n';
     }
 }
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -220,6 +221,48 @@ bool reads_distributed_units_through_the_library()
     return false;
 }
 
+// The algorithms of the specification across the boundary: an exported class with an inline member, the conversion of
+// pixel data, display functions, orientation and format rendering, and a usage_error caught by its type.
+bool runs_the_algorithms_through_the_library()
+{
+    const openxisf::color_converter srgb;
+    const openxisf::color_components white = srgb.rgb_to_lab({1.0, 1.0, 1.0});
+    if (std::abs(white[0] - 1.0) > 1e-12 || srgb.rgb_to_xyz_matrix()[1][1] <= 0.0) {
+        return false;
+    }
+    openxisf::image_info lab;
+    lab.geometry = {.dimensions = {1, 1}, .channels = 3};
+    lab.color_space = openxisf::color_space::cie_lab;
+    std::vector<std::uint16_t> samples{65535, 32768, 32768};
+    // The lightest colour, a and b within 1/65535 of the achromatic axis: white.
+    openxisf::convert_lab_to_rgb(std::as_writable_bytes(std::span(samples)), lab);
+    if (!std::ranges::all_of(samples, [](std::uint16_t sample) { return sample > 65500; })) {
+        return false;
+    }
+    openxisf::image_info rgb = lab;
+    rgb.color_space = openxisf::color_space::rgb;
+    const openxisf::display_function stretch =
+        openxisf::adaptive_display_function(std::as_bytes(std::span(samples)), rgb);
+    if (openxisf::apply_display_function(stretch, 0, 0.5) != openxisf::midtones_transfer(0.5, stretch.midtones[0])) {
+        return false;
+    }
+    const std::vector<std::byte> turned =
+        openxisf::orient_pixels(std::as_bytes(std::span(samples)), {.dimensions = {3, 1}, .channels = 1}, 2,
+                                openxisf::pixel_storage::planar, openxisf::orientation::rotate_90);
+    if (turned.size() != 6 ||
+        openxisf::format_value(std::uint16_t{255}, {.base = openxisf::format_base::hexadecimal}) != "ff") {
+        return false;
+    }
+    try {
+        openxisf::rgb_working_space flat;
+        flat.y = {0.0, 0.5, 0.5};
+        (void)openxisf::color_converter(flat);
+    } catch (const openxisf::usage_error& failure) {
+        return failure.code() == openxisf::errc::invalid_rgb_working_space;
+    }
+    return false;
+}
+
 } // namespace
 
 // Built against an installed package. It fails when the header, the library and the package version file
@@ -264,6 +307,10 @@ int main()
         }
         if (!reads_distributed_units_through_the_library()) {
             std::cerr << "the distributed units of the library do not read as expected\n";
+            return 1;
+        }
+        if (!runs_the_algorithms_through_the_library()) {
+            std::cerr << "the algorithms of the library do not work as expected\n";
             return 1;
         }
         return 0;

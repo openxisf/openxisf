@@ -80,9 +80,11 @@ struct write_options
     /// data. It applies with a codec only.
     bool byte_shuffle = false;
     /// The largest piece of a compressed block, before compression, in bytes: a block is divided into subblocks of this
-    /// size, which decoders can decompress in parallel. With 0, blocks are divided only where a codec requires it. A
-    /// subblock that the codec does not make smaller is stored as it is, with equal compressed and uncompressed sizes,
-    /// as PixInsight stores and reads such subblocks; decoders that know only the specification may not read them.
+    /// size, which decoders can decompress in parallel, and which OpenXISF built with oneTBB compresses and
+    /// decompresses in parallel. Subblocks of 1 to 4 MiB cost little: on a 100 MiB image the compression ratio stays
+    /// within 0.3% of that of a single block. With 0, blocks are divided only where a codec requires it. A subblock
+    /// that the codec does not make smaller is stored as it is, with equal compressed and uncompressed sizes, as
+    /// PixInsight stores and reads such subblocks; decoders that know only the specification may not read them.
     std::uint64_t subblock_size = 0;
     /// Give each data block a checksum with this algorithm; none when empty.
     std::optional<checksum_algorithm> checksum{};

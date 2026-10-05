@@ -193,6 +193,35 @@ TEST(compressed_block, a_subblock_that_does_not_compress_is_stored_as_it_is)
     }
 }
 
+TEST(compressed_block, codec_output_of_the_size_of_its_data_is_not_stored)
+{
+    // Equal sizes mean data stored as they are, so codec output exactly as long as its data would be read back as data.
+    // Noise, a run of zeros and noise again: LZ4 spends a few bytes on the noise and saves on the run, and for some
+    // lengths of the two they are equal. Those are searched for, since versions of LZ4 differ.
+    std::vector<std::byte> noise;
+    std::uint32_t state = 7;
+    for (std::size_t i = 0; i < 1100; ++i) {
+        state = (state * 1'664'525U) + 1'013'904'223U;
+        noise.push_back(static_cast<std::byte>(state >> 24U));
+    }
+    for (std::size_t length = 900; length < 1000; ++length) {
+        for (std::size_t run = 0; run < 64; ++run) {
+            std::vector<std::byte> data(noise.begin(), noise.begin() + static_cast<std::ptrdiff_t>(length));
+            data.resize(length + run);
+            data.insert(data.end(), noise.begin() + 1000, noise.end());
+            std::vector<std::byte> output;
+            openxisf::detail::lz4_compress(data, output);
+            if (output.size() == data.size()) {
+                const compressed_block block = compress_block(data, {.codec = compression_codec::lz4});
+                EXPECT_EQ(block.data, data);
+                EXPECT_EQ(decompressed(block), data);
+                return;
+            }
+        }
+    }
+    ADD_FAILURE() << "no noise and run of zeros make the output of LZ4 as long as its data";
+}
+
 TEST(compressed_block, subblocks_are_compressed_and_handed_over_one_at_a_time)
 {
     // 2,500 bytes in subblocks of 1,000: each one reaches the store, in order, before the next one is compressed.
@@ -354,6 +383,24 @@ TEST(compressed_block, progress_follows_the_subblocks_and_can_stop_the_decompres
                  std::runtime_error);
 }
 
+TEST(compressed_block, a_block_decompresses_into_memory_of_the_caller)
+{
+    // With and without byte shuffling, in several subblocks.
+    for (const std::uint64_t item_size : {0U, 2U}) {
+        const compressed_block block = compress_block(
+            samples(2500), {.codec = compression_codec::lz4, .item_size = item_size, .max_subblock_size = 1000});
+        std::vector<std::byte> destination(2500);
+        openxisf::detail::decompress_block_into(block.data, block.compression, {}, destination);
+        EXPECT_EQ(destination, samples(2500)) << item_size;
+        for (const std::size_t size : {2499U, 2501U}) {
+            std::vector<std::byte> other(size);
+            EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument, [&] {
+                openxisf::detail::decompress_block_into(block.data, block.compression, {}, other);
+            })) << size;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Limits
 
@@ -364,6 +411,16 @@ TEST(compressed_block, a_block_that_decompresses_beyond_the_allocation_limit_is_
                                               [&block] { (void)decompressed(block, {.max_allocation = 999}); }));
     EXPECT_EQ(decompressed(block, {.max_allocation = 1000}).size(), 1000U);
     EXPECT_EQ(decompressed(block, {.max_allocation = 0}).size(), 1000U);
+
+    // Into memory of the caller, only a shuffled block needs a buffer of its size.
+    std::vector<std::byte> destination(1000);
+    openxisf::detail::decompress_block_into(block.data, block.compression, {.max_allocation = 999}, destination);
+    EXPECT_EQ(destination, samples(1000));
+    const compressed_block shuffled = compress_block(samples(1000), {.item_size = 2});
+    EXPECT_TRUE(throws<openxisf::limit_error>(errc::allocation_too_large, [&] {
+        openxisf::detail::decompress_block_into(shuffled.data, shuffled.compression, {.max_allocation = 999},
+                                                destination);
+    }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

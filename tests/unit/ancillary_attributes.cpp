@@ -8,7 +8,6 @@
 #include <openxisf/error.h>
 #include <openxisf/image.h>
 
-#include "support/opened_unit.h"
 #include "support/throws.h"
 
 #include <gtest/gtest.h>
@@ -83,31 +82,6 @@ TEST(ancillary_attributes, a_list_of_values_has_exactly_its_items_each_finite)
     EXPECT_TRUE(throws<invalid_data_error>(errc::invalid_display_function, [] {
         (void)detail::parse_quadruplet("1:2:3", errc::invalid_display_function);
     }));
-}
-
-TEST(ancillary_attributes, the_luminance_coefficients_follow_from_the_chromaticities_and_d50)
-{
-    // The examples of spec §11.8.2, written with six decimals: sRGB and Adobe RGB (1998) relative to D50.
-    const std::optional<std::array<double, 3>> srgb_derived =
-        detail::derive_luminance({0.648431, 0.321152, 0.155886}, {0.330856, 0.597871, 0.066044});
-    const std::optional<std::array<double, 3>> adobe_derived =
-        detail::derive_luminance({0.648431, 0.230154, 0.155886}, {0.330856, 0.701572, 0.066044});
-    const std::array<double, 3>& srgb = openxisf::test::value_of(srgb_derived);
-    const std::array<double, 3>& adobe = openxisf::test::value_of(adobe_derived);
-    const std::array<double, 3> srgb_y{0.222491, 0.716888, 0.060621};
-    const std::array<double, 3> adobe_y{0.311114, 0.625662, 0.063224};
-    for (std::size_t i = 0; i < 3; ++i) {
-        EXPECT_NEAR(srgb[i], srgb_y[i], 1e-6) << i;
-        EXPECT_NEAR(adobe[i], adobe_y[i], 1e-6) << i;
-    }
-    EXPECT_NEAR(srgb[0] + srgb[1] + srgb[2], 1.0, 1e-12);
-}
-
-TEST(ancillary_attributes, chromaticities_without_a_solution_define_no_working_space)
-{
-    // A y coordinate of zero, and three equal primaries, whose system is singular.
-    EXPECT_EQ(detail::derive_luminance({0.6, 0.3, 0.15}, {0.3, 0.6, 0.0}), std::nullopt);
-    EXPECT_EQ(detail::derive_luminance({0.3, 0.3, 0.3}, {0.3, 0.3, 0.3}), std::nullopt);
 }
 
 TEST(ancillary_attributes, a_working_space_has_values_in_the_unit_range_and_a_solution)

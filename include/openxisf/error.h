@@ -108,6 +108,7 @@ enum class errc
     invalid_index_element,   ///< A block index element whose uncompressed length disagrees with the header.
     too_many_external_files, ///< A unit names more external files than limits::max_external_files.
     location_not_allowed,    ///< A location that a resolver refuses, such as a path that leaves the header's directory.
+    hash_failure,            ///< The hashing library (OpenSSL) failed for a reason other than the data.
 };
 
 /// Where in a unit a problem was found. Empty or absent members are unknown or do not apply.

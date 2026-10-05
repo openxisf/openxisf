@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,15 @@ using block_progress = std::function<void(std::uint64_t done)>;
 [[nodiscard]] std::vector<std::byte> read_block(const thread_safe_source& source, const data_block& block,
                                                 const limits& limits, const block_progress& progress = {},
                                                 std::size_t piece_size = default_piece_size);
+
+/// Reads the data of a block, as read_block() returns them, into destination, which must have their size (data_size()
+/// of its descriptor): the stored bytes of a block that is not compressed are read straight into it, and a compressed
+/// block is decompressed into it. Throws what read_block() throws, and usage_error with errc::invalid_argument when
+/// destination has another size. When it throws, destination may hold part of the data, but never bytes that failed
+/// their checksum.
+void read_block_into(const thread_safe_source& source, const data_block& block, const limits& limits,
+                     std::span<std::byte> destination, const block_progress& progress = {},
+                     std::size_t piece_size = default_piece_size);
 
 /// The data of an available block, as read_block() returns them, with errors that have no context, so that the caller
 /// can give them its own. What the source throws passes through.

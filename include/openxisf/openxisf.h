@@ -3,11 +3,15 @@
 
 #pragma once
 
+#include <openxisf/color.h>
+#include <openxisf/display.h>
 #include <openxisf/error.h>
 #include <openxisf/export.h>
+#include <openxisf/format.h>
 #include <openxisf/image.h>
 #include <openxisf/io.h>
 #include <openxisf/limits.h>
+#include <openxisf/orientation.h>
 #include <openxisf/property.h>
 #include <openxisf/reader.h>
 #include <openxisf/stream_io.h>

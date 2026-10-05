@@ -3,8 +3,11 @@
 
 #include "crypto/hash.h"
 
+#include <openxisf/error.h>
+
 #include "core/data_encoding.h"
 #include "support/bytes.h"
+#include "support/throws.h"
 
 #include <gtest/gtest.h>
 
@@ -21,15 +24,33 @@ namespace {
 using openxisf::detail::compute_digest;
 using openxisf::detail::encode_hex;
 using openxisf::detail::hash_algorithm;
+using openxisf::detail::hash_backend;
 using openxisf::detail::hash_name;
 using openxisf::detail::hasher;
 
 constexpr std::array all_algorithms{hash_algorithm::sha1, hash_algorithm::sha256, hash_algorithm::sha512,
                                     hash_algorithm::sha3_256, hash_algorithm::sha3_512};
 
-std::string digest_of(hash_algorithm algorithm, std::span<const std::byte> message)
+// The backends of the build: the portable code, and libcrypto in a build with OpenSSL. Every test runs on each.
+std::vector<hash_backend> backends()
 {
-    return encode_hex(compute_digest(algorithm, message));
+    std::vector<hash_backend> result{hash_backend::portable};
+    if (openxisf::detail::default_hash_backend() == hash_backend::libcrypto) {
+        result.push_back(hash_backend::libcrypto);
+    }
+    return result;
+}
+
+std::string backend_name(hash_backend backend)
+{
+    return backend == hash_backend::portable ? "portable" : "libcrypto";
+}
+
+std::string digest_of(hash_algorithm algorithm, std::span<const std::byte> message, hash_backend backend)
+{
+    hasher state(algorithm, backend);
+    state.update(message);
+    return encode_hex(state.finish());
 }
 
 // The messages of the examples of FIPS 180 and FIPS 202.
@@ -144,9 +165,12 @@ constexpr std::array known_answers{
 
 TEST(hash, computes_the_nist_examples)
 {
-    for (const known_answer& answer : known_answers) {
-        EXPECT_EQ(digest_of(answer.algorithm, make(answer.input)), answer.digest)
-            << hash_name(answer.algorithm) << ", message " << static_cast<int>(answer.input);
+    for (const hash_backend backend : backends()) {
+        for (const known_answer& answer : known_answers) {
+            EXPECT_EQ(digest_of(answer.algorithm, make(answer.input), backend), answer.digest)
+                << hash_name(answer.algorithm) << ", message " << static_cast<int>(answer.input) << ", "
+                << backend_name(backend);
+        }
     }
 }
 
@@ -230,30 +254,49 @@ TEST(hash, pads_the_message_on_both_sides_of_a_block_boundary)
                       .digest = "921d9b7b2b0f3066a1646dbb058c979cb3925dec0f8c269faaa7f9648e73465a"
                                 "e55ec527257d5d5e1cfdbf5d6799bea1004b6186f5108c74e3b92fe924166558"},
     };
-    for (const boundary_case& entry : cases) {
-        std::vector<std::byte> input(entry.length);
-        for (std::size_t i = 0; i < input.size(); ++i) {
-            input[i] = static_cast<std::byte>(i);
+    for (const hash_backend backend : backends()) {
+        for (const boundary_case& entry : cases) {
+            std::vector<std::byte> input(entry.length);
+            for (std::size_t i = 0; i < input.size(); ++i) {
+                input[i] = static_cast<std::byte>(i);
+            }
+            EXPECT_EQ(digest_of(entry.algorithm, input, backend), entry.digest)
+                << hash_name(entry.algorithm) << ", " << entry.length << " bytes, " << backend_name(backend);
         }
-        EXPECT_EQ(digest_of(entry.algorithm, input), entry.digest)
-            << hash_name(entry.algorithm) << ", " << entry.length << " bytes";
     }
 }
 
 TEST(hash, the_digest_does_not_depend_on_how_the_message_is_cut)
 {
     const std::vector<std::byte> input = openxisf::test::pattern(1000);
-    for (const hash_algorithm algorithm : all_algorithms) {
-        const std::string whole = digest_of(algorithm, input);
-        for (const std::size_t piece : {1U, 7U, 63U, 64U, 65U, 72U, 136U, 999U}) {
-            hasher state(algorithm);
-            for (std::size_t start = 0; start < input.size(); start += piece) {
-                state.update(std::span(input).subspan(start, std::min(piece, input.size() - start)));
+    for (const hash_backend backend : backends()) {
+        for (const hash_algorithm algorithm : all_algorithms) {
+            const std::string whole = digest_of(algorithm, input, backend);
+            for (const std::size_t piece : {1U, 7U, 63U, 64U, 65U, 72U, 136U, 999U}) {
+                hasher state(algorithm, backend);
+                for (std::size_t start = 0; start < input.size(); start += piece) {
+                    state.update(std::span(input).subspan(start, std::min(piece, input.size() - start)));
+                }
+                state.update({});
+                EXPECT_EQ(encode_hex(state.finish()), whole)
+                    << hash_name(algorithm) << ", pieces of " << piece << ", " << backend_name(backend);
             }
-            state.update({});
-            EXPECT_EQ(encode_hex(state.finish()), whole) << hash_name(algorithm) << ", pieces of " << piece;
         }
     }
+}
+
+TEST(hash, the_default_backend_is_that_of_the_build)
+{
+    // Digests come from libcrypto in a build with OpenSSL, which computes them faster.
+#if defined(OPENXISF_WITH_OPENSSL)
+    EXPECT_EQ(openxisf::detail::default_hash_backend(), hash_backend::libcrypto);
+#else
+    EXPECT_EQ(openxisf::detail::default_hash_backend(), hash_backend::portable);
+    EXPECT_TRUE(openxisf::test::throws<openxisf::usage_error>(
+        openxisf::errc::invalid_argument, [] { const hasher state(hash_algorithm::sha1, hash_backend::libcrypto); }));
+#endif
+    EXPECT_EQ(encode_hex(compute_digest(hash_algorithm::sha1, openxisf::test::bytes("abc"))),
+              "a9993e364706816aba3e25717850c26c9cd0d89d");
 }
 
 } // namespace

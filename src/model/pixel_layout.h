@@ -24,8 +24,9 @@ namespace openxisf::detail {
 void to_native_byte_order(std::span<std::byte> data, sample_format format, byte_order order) noexcept;
 
 /// Copies the samples of source, stored in the model from, into destination in the other model. Both hold pixel_count ×
-/// channels samples of sample_size bytes, and they do not overlap.
+/// channels samples of sample_size bytes, and they do not overlap. With oneTBB, pieces of the image are copied in
+/// parallel.
 void convert_storage(std::span<const std::byte> source, std::span<std::byte> destination, pixel_storage from,
-                     std::size_t pixel_count, std::size_t channels, std::size_t sample_size) noexcept;
+                     std::size_t pixel_count, std::size_t channels, std::size_t sample_size);
 
 } // namespace openxisf::detail
