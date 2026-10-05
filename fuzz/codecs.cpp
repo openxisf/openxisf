@@ -12,7 +12,9 @@
 //   subblocks within that size, which decode to the data again. The size grows when it would make more than 64
 //   subblocks, which would only make the run slow.
 //
-// In both modes, unshuffling reverses shuffling. Any other exception escapes and fails the run.
+// In both modes, unshuffling reverses shuffling, the SIMD kernels give the bytes of the scalar code, a part of the
+// shuffled data is that part of the whole, and a block decompressed into memory of the caller is the block returned.
+// Any other exception escapes and fails the run.
 
 #include <openxisf/error.h>
 #include <openxisf/limits.h>
@@ -76,12 +78,23 @@ private:
 void check_shuffling(std::span<const std::byte> data, std::size_t item_size)
 {
     std::vector<std::byte> shuffled(data.size());
-    detail::shuffle_bytes(data, shuffled, item_size);
+    detail::shuffle_bytes(data, shuffled, item_size, detail::shuffle_kernel::scalar);
     const std::size_t tail = item_size == 0 ? data.size() : data.size() % item_size;
     require(std::ranges::equal(std::span(shuffled).last(tail), data.last(tail)));
+    std::vector<std::byte> simd(data.size());
+    detail::shuffle_bytes(data, simd, item_size, detail::shuffle_kernel::simd);
+    require(simd == shuffled);
+
     std::vector<std::byte> unshuffled(data.size());
-    detail::unshuffle_bytes(shuffled, unshuffled, item_size);
+    detail::unshuffle_bytes(shuffled, unshuffled, item_size, detail::shuffle_kernel::scalar);
     require(std::ranges::equal(unshuffled, data));
+    detail::unshuffle_bytes(shuffled, simd, item_size, detail::shuffle_kernel::simd);
+    require(std::ranges::equal(simd, data));
+
+    // The middle third, which starts and ends inside runs.
+    std::vector<std::byte> part(data.size() / 3);
+    detail::shuffle_part(data, item_size, part.size(), part);
+    require(std::ranges::equal(part, std::span(shuffled).subspan(part.size(), part.size())));
 }
 
 void decode(reader& input, detail::compression_codec codec, std::uint64_t item_size)
@@ -108,6 +121,9 @@ void decode(reader& input, detail::compression_codec codec, std::uint64_t item_s
         return;
     }
     require(data.size() == compression.uncompressed_size);
+    std::vector<std::byte> destination(data.size());
+    detail::decompress_block_into(stored, compression, limits, destination);
+    require(destination == data);
     check_shuffling(data, static_cast<std::size_t>(item_size));
 }
 

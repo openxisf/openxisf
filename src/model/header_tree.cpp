@@ -3,6 +3,7 @@
 
 #include "model/header_tree.h"
 
+#include <openxisf/color.h>
 #include <openxisf/version.h>
 
 #include "core/endian.h"
@@ -295,7 +296,7 @@ private:
             add(child, "x", format_list(space.x));
             add(child, "y", format_list(space.y));
             // The coefficients that the chromaticities give, which an encoder computes (spec §11.8.1).
-            const std::optional<std::array<double, 3>> luminance = derive_luminance(space.x, space.y);
+            const std::optional<std::array<double, 3>> luminance = luminance_coefficients(space.x, space.y);
             add(child, "Y", format_list(luminance.value_or(space.luminance)));
             add(child, "gamma", space.gamma ? format_double(*space.gamma) : std::string("sRGB"));
             if (!space.name.empty()) {

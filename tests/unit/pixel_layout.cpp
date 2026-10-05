@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -149,16 +150,43 @@ TEST(pixel_layout, a_single_channel_is_stored_the_same_way_in_both_models)
     EXPECT_EQ(converted, data);
 }
 
-TEST(pixel_layout, samples_of_sixteen_bytes_move_as_a_whole)
+TEST(pixel_layout, a_large_image_is_converted_piece_by_piece)
 {
-    // Complex64 samples: 3 pixels of 2 channels.
-    const std::vector<std::byte> planar = openxisf::test::pattern(std::size_t{3} * 2 * 16);
-    std::vector<std::byte> normal(planar.size());
-    convert_storage(planar, normal, pixel_storage::planar, 3, 2, 16);
-    for (std::size_t p = 0; p < 3; ++p) {
-        for (std::size_t c = 0; c < 2; ++c) {
-            for (std::size_t b = 0; b < 16; ++b) {
-                EXPECT_EQ(normal[(((p * 2) + c) * 16) + b], planar[(((c * 3) + p) * 16) + b]) << p << c << b;
+    // Images are converted in pieces of about 1 MiB, and this one spans several: 3 channels of 32-bit samples whose
+    // values are their channel and pixel.
+    constexpr std::size_t pixels = 250'003;
+    constexpr std::size_t channels = 3;
+    std::vector<std::uint32_t> planar(pixels * channels);
+    std::vector<std::uint32_t> normal(pixels * channels);
+    for (std::size_t c = 0; c < channels; ++c) {
+        for (std::size_t p = 0; p < pixels; ++p) {
+            const auto value = static_cast<std::uint32_t>((c << 24U) | p);
+            planar[(c * pixels) + p] = value;
+            normal[(p * channels) + c] = value;
+        }
+    }
+    std::vector<std::uint32_t> converted(planar.size());
+    convert_storage(std::as_bytes(std::span(planar)), std::as_writable_bytes(std::span(converted)),
+                    pixel_storage::planar, pixels, channels, 4);
+    EXPECT_EQ(converted, normal);
+    convert_storage(std::as_bytes(std::span(normal)), std::as_writable_bytes(std::span(converted)),
+                    pixel_storage::normal, pixels, channels, 4);
+    EXPECT_EQ(converted, planar);
+}
+
+TEST(pixel_layout, samples_move_as_a_whole)
+{
+    // Complex64 samples, and samples of a size that no sample format has: 3 pixels of 2 channels.
+    for (const std::size_t size : {16U, 3U}) {
+        const std::vector<std::byte> planar = openxisf::test::pattern(std::size_t{3} * 2 * size);
+        std::vector<std::byte> normal(planar.size());
+        convert_storage(planar, normal, pixel_storage::planar, 3, 2, size);
+        for (std::size_t p = 0; p < 3; ++p) {
+            for (std::size_t c = 0; c < 2; ++c) {
+                for (std::size_t b = 0; b < size; ++b) {
+                    EXPECT_EQ(normal[(((p * 2) + c) * size) + b], planar[(((c * 3) + p) * size) + b])
+                        << size << p << c << b;
+                }
             }
         }
     }

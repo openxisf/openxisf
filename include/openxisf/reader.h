@@ -155,7 +155,9 @@ public:
     [[nodiscard]] std::vector<std::byte> read_pixels(std::size_t index, const pixel_read_options& options = {}) const;
 
     /// Reads the pixel data of the image at index into destination, which must have exactly image(index).data_size()
-    /// bytes, with the exceptions of the other read_pixels(). When it throws, destination may hold part of the data.
+    /// bytes, with the exceptions of the other read_pixels(). Data that are not compressed and keep their storage
+    /// model are read straight into destination, so limits::max_allocation does not apply to them. When it throws,
+    /// destination may hold part of the data, but never data that failed their checksum.
     /// @throws usage_error when destination has another size.
     void read_pixels(std::size_t index, std::span<std::byte> destination, const pixel_read_options& options = {}) const;
 

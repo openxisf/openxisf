@@ -22,6 +22,7 @@ void throw_unit_error(errc code, std::string_view message, error_context context
     case errc::unsupported_color_space:
     case errc::codec_failure:
     case errc::location_not_allowed:
+    case errc::hash_failure:
         throw unsupported_error(code, message, std::move(context));
     case errc::allocation_too_large:
     case errc::zstd_window_too_large:

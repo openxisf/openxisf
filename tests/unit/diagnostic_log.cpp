@@ -60,7 +60,7 @@ TEST(diagnostic_log, the_exception_of_an_error_says_what_kind_of_failure_it_is)
     for (const errc code :
          {errc::unsupported_version, errc::unsupported_location, errc::unsupported_checksum,
           errc::unsupported_compression, errc::unsupported_property_type, errc::unsupported_sample_format,
-          errc::unsupported_color_space, errc::location_not_allowed}) {
+          errc::unsupported_color_space, errc::codec_failure, errc::location_not_allowed, errc::hash_failure}) {
         EXPECT_TRUE(throws<openxisf::unsupported_error>(code, [code] { throw_unit_error(code, "message", {}); }));
     }
     for (const errc code : {errc::allocation_too_large, errc::ancillary_data_too_large, errc::too_many_index_nodes,

@@ -9,11 +9,13 @@
 // parser accepts its text, and what it accepts formats back to text that parses to the same value, or it throws the
 // error of its grammar. Then a unit with a Property element made of the lines is opened, leniently and strictly, with
 // small limits: the two agree as in fuzz_header, and every property that the unit has is of the type that its element
-// names. Any other exception escapes and fails the run.
+// names, and is rendered as text with its format specifier (spec §8.4.3): valid UTF-8, padded to its width within the
+// bound of the renderer, its first element the start of the whole. Any other exception escapes and fails the run.
 
 #include "model/property_text.h"
 
 #include <openxisf/error.h>
+#include <openxisf/format.h>
 #include <openxisf/io.h>
 #include <openxisf/property.h>
 
@@ -242,6 +244,32 @@ bool same(const openxisf::diagnostic& a, const openxisf::diagnostic& b)
     return a.severity == b.severity && a.code == b.code && a.message == b.message && a.context == b.context;
 }
 
+// The number of characters of UTF-8 text.
+std::size_t character_count(std::string_view text)
+{
+    return static_cast<std::size_t>(
+        std::ranges::count_if(text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; }));
+}
+
+// A property as text, with its format: every value that a unit holds renders.
+void check_rendering(const openxisf::property& item)
+{
+    const openxisf::property_format format = item.format.value_or(openxisf::property_format{});
+    const std::string text = openxisf::format_value(item.value, format);
+    require(detail::is_valid_utf8(text));
+    const detail::type_category category = detail::category_of(item.value.type());
+    if (category == detail::type_category::vector || category == detail::type_category::matrix) {
+        if (item.value.length() != 0) {
+            require(text.starts_with(openxisf::format_element(item.value, 0, format)));
+        }
+    } else if (category != detail::type_category::time_point && category != detail::type_category::complex) {
+        // A width beyond 1024 counts as 1024; a number is at most a sign, 309 digits, a point and 1024 digits.
+        const std::size_t width = std::min<std::size_t>(format.width, 1024);
+        require(character_count(text) >= width);
+        require(category == detail::type_category::string || text.size() <= std::max<std::size_t>(width, 1335));
+    }
+}
+
 // Every property that the unit has keeps the invariants of its type.
 void check_properties(const detail::unit& opened, const fields& input, std::optional<property_type> type)
 {
@@ -263,6 +291,7 @@ void check_properties(const detail::unit& opened, const fields& input, std::opti
         default:
             require(value.length() == 0);
         }
+        check_rendering(item);
     }
     require(opened.properties.metadata.size() == 2);
 }

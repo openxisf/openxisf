@@ -551,6 +551,45 @@ TEST(data_block, the_progress_of_a_block_counts_the_bytes_read_then_those_decomp
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Reads into memory of the caller
+
+TEST(data_block, a_block_read_into_memory_of_the_caller_is_verified_there)
+{
+    const std::string sha1_of_abc = "a9993e364706816aba3e25717850c26c9cd0d89d";
+    const std::vector<std::byte> file = file_with_attachments(
+        header_xml(row_image(3, R"(location="attachment:{0}" checksum="sha1:)" + sha1_of_abc + "\"") +
+                   row_image(3, R"(location="attachment:{1}" checksum="sha1:)" + sha1_of_abc + "\"")),
+        {abc(), bytes("abd")});
+    const unit opened = open_internal(file);
+    std::vector<std::byte> destination(3);
+    openxisf::detail::read_block_into(opened.source, block_at(opened, "/xisf/Image[1]"), opened.limits, destination);
+    EXPECT_EQ(destination, abc());
+
+    // Spec §10.5: bytes that fail their checksum are not left in the destination.
+    std::ranges::fill(destination, std::byte{0xEE});
+    EXPECT_TRUE(throws<openxisf::integrity_error>(errc::checksum_mismatch, [&] {
+        openxisf::detail::read_block_into(opened.source, block_at(opened, "/xisf/Image[2]"), opened.limits,
+                                          destination);
+    }));
+    EXPECT_EQ(destination, std::vector<std::byte>(3));
+}
+
+TEST(data_block, a_block_is_read_into_memory_of_its_size)
+{
+    const unit opened = open_body(row_image(3, R"(location="inline:base64")", "YWJj"));
+    for (const std::size_t size : {2U, 4U}) {
+        std::vector<std::byte> destination(size);
+        EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument, [&] {
+            openxisf::detail::read_block_into(opened.source, block_at(opened, "/xisf/Image[1]"), opened.limits,
+                                              destination);
+        })) << size;
+    }
+    std::vector<std::byte> destination(3);
+    openxisf::detail::read_block_into(opened.source, block_at(opened, "/xisf/Image[1]"), opened.limits, destination);
+    EXPECT_EQ(destination, abc());
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Limits
 
 TEST(data_block, an_attached_block_larger_than_the_allocation_limit_is_not_read)
@@ -564,6 +603,11 @@ TEST(data_block, an_attached_block_larger_than_the_allocation_limit_is_not_read)
 
     EXPECT_EQ(stored_block(open_internal(file, {.limits = {.max_allocation = 3}}), "/xisf/Image[1]"), abc());
     EXPECT_EQ(stored_block(open_internal(file, {.limits = {.max_allocation = 0}}), "/xisf/Image[1]"), abc());
+
+    // Read into memory of the caller, the block allocates nothing.
+    std::vector<std::byte> destination(3);
+    openxisf::detail::read_block_into(limited.source, block_at(limited, "/xisf/Image[1]"), limited.limits, destination);
+    EXPECT_EQ(destination, abc());
 }
 
 } // namespace

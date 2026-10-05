@@ -4,6 +4,7 @@
 // Every sample written by PixInsight, read, written again by the writer, and read back: what the reader returns is a
 // model that the writer accepts as it is, and the unit written from it holds the same images, properties and pixels.
 
+#include <openxisf/color.h>
 #include <openxisf/image.h>
 #include <openxisf/property.h>
 #include <openxisf/reader.h>
@@ -36,7 +37,7 @@ template <typename Image> void as_written(Image& image)
     }
     if (image.rgb_working_space) {
         openxisf::rgb_working_space& space = *image.rgb_working_space;
-        space.luminance = openxisf::detail::derive_luminance(space.x, space.y).value_or(space.luminance);
+        space.luminance = openxisf::luminance_coefficients(space.x, space.y).value_or(space.luminance);
     }
 }
 

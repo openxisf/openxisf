@@ -6,6 +6,7 @@
 #include "codec/compressed_block.h"
 #include "core/checked_math.h"
 #include "core/data_encoding.h"
+#include "core/scratch_buffer.h"
 #include "core/text_grammar.h"
 #include "xml/xml_document.h"
 
@@ -433,16 +434,17 @@ private:
     error_context subblocks_context_{};
 };
 
-// The stored bytes of an available block, verified, read in pieces when there is a progress function. The errors have
-// no context.
-std::vector<std::byte> read_stored_bytes(const thread_safe_source& source, const block_descriptor& descriptor,
-                                         const limits& limits, const block_progress& progress, std::size_t piece_size)
+// Reads the stored bytes of an available block into destination, which has their size, and verifies them, in pieces
+// when there is a progress function. The errors have no context.
+void read_stored_into(const thread_safe_source& source, const block_descriptor& descriptor,
+                      std::span<std::byte> destination, const block_progress& progress, std::size_t piece_size)
 {
     if (!is_stored_apart(descriptor.location.kind)) {
+        std::ranges::copy(descriptor.data, destination.begin());
         if (progress) {
             progress(descriptor.data.size());
         }
-        return descriptor.data;
+        return;
     }
     // An external block is in its own file.
     const bool external = is_external(descriptor.location.kind);
@@ -451,34 +453,71 @@ std::vector<std::byte> read_stored_bytes(const thread_safe_source& source, const
     }
     const thread_safe_source& file = external ? *descriptor.external : source;
 
-    const std::uint64_t size = descriptor.location.size;
-    if (limits.max_allocation != 0 && size > limits.max_allocation) {
-        throw limit_error(errc::allocation_too_large, "the data block has " + std::to_string(size) +
-                                                          " bytes, more than the allocation limit of " +
-                                                          std::to_string(limits.max_allocation));
-    }
-    std::vector<std::byte> data(checked_cast<std::size_t>(size));
     if (!progress) {
-        file.read(descriptor.location.position, data);
+        file.read(descriptor.location.position, destination);
     } else {
-        for (std::size_t done = 0; done < data.size();) {
-            const std::size_t piece = std::min(std::max<std::size_t>(piece_size, 1), data.size() - done);
-            file.read(descriptor.location.position + done, std::span(data).subspan(done, piece));
+        for (std::size_t done = 0; done < destination.size();) {
+            const std::size_t piece = std::min(std::max<std::size_t>(piece_size, 1), destination.size() - done);
+            file.read(descriptor.location.position + done, destination.subspan(done, piece));
             done += piece;
             progress(done);
         }
     }
-    // Spec §10.5 and §10.6.1: nothing is returned, and so nothing is decompressed, before the digest matches.
-    if (descriptor.checksum && compute_digest(descriptor.checksum->algorithm, data) != descriptor.checksum->digest) {
+    // Spec §10.5 and §10.6.1: nothing is used, and so nothing is decompressed, before the digest matches. Bytes that
+    // fail it do not stay in the memory of the caller either.
+    if (descriptor.checksum &&
+        compute_digest(descriptor.checksum->algorithm, destination) != descriptor.checksum->digest) {
+        std::ranges::fill(destination, std::byte{0});
         throw integrity_error(errc::checksum_mismatch, "the " + std::string(hash_name(descriptor.checksum->algorithm)) +
                                                            " digest of the data block differs from its checksum");
     }
+}
+
+// The progress of the decompression of a block, which the progress of the block counts after the stored bytes read.
+subblock_progress decompression_progress(const block_progress& progress, std::uint64_t read)
+{
+    if (!progress) {
+        return {};
+    }
+    return [&progress, read](std::uint64_t done) { progress(read + done); };
+}
+
+// The size of the stored bytes of an available block, which a read that holds them allocates: an attached or external
+// block must be within the allocation limit.
+std::size_t stored_allocation(const block_descriptor& descriptor, const limits& limits)
+{
+    const std::uint64_t size = stored_size(descriptor);
+    if (is_stored_apart(descriptor.location.kind) && limits.max_allocation != 0 && size > limits.max_allocation) {
+        throw limit_error(errc::allocation_too_large, "the data block has " + std::to_string(size) +
+                                                          " bytes, more than the allocation limit of " +
+                                                          std::to_string(limits.max_allocation));
+    }
+    return checked_cast<std::size_t>(size);
+}
+
+// The stored bytes of an available block, verified, read in pieces when there is a progress function. The errors have
+// no context.
+std::vector<std::byte> read_stored_bytes(const thread_safe_source& source, const block_descriptor& descriptor,
+                                         const limits& limits, const block_progress& progress, std::size_t piece_size)
+{
+    std::vector<std::byte> data(stored_allocation(descriptor, limits));
+    read_stored_into(source, descriptor, data, progress, piece_size);
     return data;
+}
+
+// The stored bytes of an available compressed block, as read_stored_bytes() returns them, in a buffer that is only
+// decompressed from.
+scratch_buffer read_compressed_bytes(const thread_safe_source& source, const block_descriptor& descriptor,
+                                     const limits& limits, const block_progress& progress, std::size_t piece_size)
+{
+    scratch_buffer stored(stored_allocation(descriptor, limits));
+    read_stored_into(source, descriptor, stored.bytes(), progress, piece_size);
+    return stored;
 }
 
 // The result of read, whose errors have no context, with the errors given the context of block: its element, and the
 // position of an attachment. What the source throws passes through.
-template <typename Read> std::vector<std::byte> with_context_of(const data_block& block, Read&& read)
+template <typename Read> decltype(auto) with_context_of(const data_block& block, Read&& read)
 {
     error_context context{.element = block.path};
     if (block.descriptor && block.descriptor->location.kind == location_kind::attachment) {
@@ -541,18 +580,39 @@ std::vector<std::byte> read_block(const thread_safe_source& source, const data_b
     return with_context_of(block, [&] { return read_block_data(source, descriptor, limits, progress, piece_size); });
 }
 
+void read_block_into(const thread_safe_source& source, const data_block& block, const limits& limits,
+                     std::span<std::byte> destination, const block_progress& progress, std::size_t piece_size)
+{
+    if (!block.descriptor) {
+        throw_unavailable(block);
+    }
+    const block_descriptor& descriptor = *block.descriptor;
+    if (destination.size() != data_size(descriptor)) {
+        throw usage_error(errc::invalid_argument,
+                          "the destination has " + std::to_string(destination.size()) + " bytes, and the data block " +
+                              std::to_string(data_size(descriptor)),
+                          {.element = block.path});
+    }
+    with_context_of(block, [&] {
+        if (!descriptor.compression) {
+            read_stored_into(source, descriptor, destination, progress, piece_size);
+            return;
+        }
+        const scratch_buffer stored = read_compressed_bytes(source, descriptor, limits, progress, piece_size);
+        decompress_block_into(stored.bytes(), *descriptor.compression, limits, destination,
+                              decompression_progress(progress, stored.bytes().size()));
+    });
+}
+
 std::vector<std::byte> read_block_data(const thread_safe_source& source, const block_descriptor& descriptor,
                                        const limits& limits, const block_progress& progress, std::size_t piece_size)
 {
-    std::vector<std::byte> stored = read_stored_bytes(source, descriptor, limits, progress, piece_size);
     if (!descriptor.compression) {
-        return stored;
+        return read_stored_bytes(source, descriptor, limits, progress, piece_size);
     }
-    subblock_progress decompressed;
-    if (progress) {
-        decompressed = [&progress, read = stored.size()](std::uint64_t done) { progress(read + done); };
-    }
-    return decompress_block(stored, *descriptor.compression, limits, decompressed);
+    const scratch_buffer stored = read_compressed_bytes(source, descriptor, limits, progress, piece_size);
+    return decompress_block(stored.bytes(), *descriptor.compression, limits,
+                            decompression_progress(progress, stored.bytes().size()));
 }
 
 std::uint64_t stored_size(const block_descriptor& descriptor) noexcept
