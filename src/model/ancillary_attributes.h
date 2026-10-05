@@ -35,13 +35,8 @@ namespace openxisf::detail {
 /// The four values of an attribute of the form a:b:c:d, like parse_triplet().
 [[nodiscard]] std::array<double, 4> parse_quadruplet(std::string_view text, errc code);
 
-/// The luminance coefficients that the chromaticities x and y of the primaries give relative to the D50 reference white
-/// (spec §8.5.4.1), or nothing when they define no RGB working space: a y coordinate of zero, or a singular system.
-[[nodiscard]] std::optional<std::array<double, 3>> derive_luminance(const std::array<double, 3>& x,
-                                                                    const std::array<double, 3>& y) noexcept;
-
-/// How far stored luminance coefficients may be from the derived ones: values written with four decimals agree, and
-/// the coefficients of another reference white, such as those of sRGB for D65, do not.
+/// How far stored luminance coefficients may be from those that luminance_coefficients() derives: values written with
+/// four decimals agree, and the coefficients of another reference white, such as those of sRGB for D65, do not.
 inline constexpr double luminance_tolerance = 1e-4;
 
 /// Checks the rules of spec §8.5.4.1 for an RGB working space read from its attributes: chromaticities and luminance

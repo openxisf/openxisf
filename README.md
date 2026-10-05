@@ -5,8 +5,9 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: 0.3.0, an early release.** It reads and writes monolithic and distributed units; the algorithms of the
-specification come in later releases, and the API may change before 1.0. `openxisf::reader` checks the header of a
+**Status: 0.4.0, an early release.** It reads and writes monolithic and distributed units, and implements the
+algorithms that the specification defines; astrometric solutions and signed units come in later releases, and the API may
+change before 1.0. `openxisf::reader` checks the header of a
 unit (the file structure, the XML, the root element, the elements of the specification and the references between
 them) and its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with
 SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its
@@ -22,6 +23,11 @@ every block uncompressed and without checksums unless asked otherwise, so that e
 On request it compresses blocks with zlib, LZ4, LZ4HC or Zstandard, with byte shuffling and subblocks, adds checksums
 and generates UUIDs. It writes a monolithic file, or a distributed unit: a header file and a data blocks file next to
 it. Files are replaced only once they are complete.
+The algorithms of the specification are there to show and convert images: the colour transformations of Annex B between
+RGB, CIE XYZ and CIE L*a*b*, relative to the RGB working space of an image, with helpers that convert pixel data to CIE
+L*a*b* before writing and back to RGB after reading; display functions, and the adaptive algorithm that computes one from
+the statistics of an image; the orientation of an image, applied for showing it only; and property values written as
+text with their format specifiers.
 The repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
 input and output layer, and the internal building blocks: the text forms of numbers and Boolean values, Base64 and
 hexadecimal data, UUIDs and time stamps.
@@ -39,7 +45,7 @@ hexadecimal data, UUIDs and time stamps.
 | Properties: scalars, complex numbers, strings, time points, vectors, matrices, tables | Yes | Yes |
 | Images: every sample format, planar and normal storage, both byte orders | Yes | Yes, in little-endian byte order |
 | Ancillary elements: FITS keywords, ICC profile, RGB working space, display function, color filter array, resolution, thumbnail | Yes | Yes |
-| Colour transformations, display functions, orientation, property format rendering | Planned | Planned |
+| Colour transformations (Annex B), display functions and their adaptive algorithm, orientation, property format rendering | Yes | Yes |
 | Astrometric solutions | Planned | Planned |
 | Signed units (the signature is returned, not verified) | Planned | Not applicable |
 
@@ -74,8 +80,9 @@ the Linux ones add UndefinedBehaviorSanitizer), `linux-clang-tsan` (ThreadSaniti
 `linux-clang-fuzz` builds the fuzz targets with libFuzzer, and its tests fuzz each target for a minute, starting from the
 seeds in `fuzz/seeds`. The other presets run those seeds once, as a regression test.
 
-`-DOPENXISF_BUILD_BENCHMARKS=ON` builds `openxisf_benchmarks`, which measures the codecs, byte shuffling and the
-checksums. Run it from a release build; its test only checks that every benchmark runs.
+`-DOPENXISF_BUILD_BENCHMARKS=ON` builds `openxisf_benchmarks`, which measures the codecs, byte shuffling, the
+checksums, the conversion between storage models, the opening of a large header, and the reading and writing of a
+100 MiB frame. Run it from a release build; its test only checks that every benchmark runs.
 
 ### Dependencies
 
@@ -84,11 +91,12 @@ checksums. Run it from a release build; its test only checks that every benchmar
   `-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`. Optional dependencies are features:
   `-DVCPKG_MANIFEST_FEATURES="tests;benchmarks;tbb;openssl"`.
 - **Linux.** `sudo apt install pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev`, and
-  `libbenchmark-dev` for the benchmarks.
+  `libbenchmark-dev` for the benchmarks, `libtbb-dev` for oneTBB and `libssl-dev` for OpenSSL.
 - **MSYS2.** In the UCRT64 or CLANG64 shell, install `cmake`, `ninja`, `pkgconf`, `pugixml`, `zlib`, `lz4`, `zstd` and
-  `gtest` with the matching `mingw-w64-<environment>-` prefix, plus the compiler.
-- **macOS.** `brew install pkgconf pugixml lz4 zstd googletest`, then configure with
-  `-DCMAKE_PREFIX_PATH="$(brew --prefix)"`.
+  `gtest` with the matching `mingw-w64-<environment>-` prefix, plus the compiler, and `tbb` and `openssl` for the
+  options that use them.
+- **macOS.** `brew install pkgconf pugixml lz4 zstd googletest`, and `tbb` and `openssl@3` for the options that use them,
+  then configure with `-DCMAKE_PREFIX_PATH="$(brew --prefix)"` (and `$(brew --prefix openssl@3)` for OpenSSL).
 
 The Visual Studio presets use Ninja, which needs the compiler environment: run them from a Developer PowerShell
 (or any shell where `cl` works). The MSYS2 presets run from the matching MSYS2 shell.
@@ -105,8 +113,9 @@ The Visual Studio presets use Ninja, which needs the compiler environment: run t
 | `OPENXISF_FUZZ_SECONDS` | `60` | How long the test of each fuzz target runs with libFuzzer |
 | `OPENXISF_BUILD_DOCS` | `OFF` | Add the `docs` target, which builds the API documentation with Doxygen |
 | `OPENXISF_INSTALL` | `ON` at the top level | Generate the install rules |
-| `OPENXISF_WITH_TBB` | `OFF` | Use oneTBB |
-| `OPENXISF_WITH_OPENSSL` | `OFF` | Use OpenSSL (libcrypto) |
+| `OPENXISF_ENABLE_SIMD` | `ON` | Shuffle and unshuffle bytes with SSE2 on x86-64; other processors use the portable code |
+| `OPENXISF_WITH_TBB` | `OFF` | Use oneTBB to compress and decompress the subblocks of a block, and to convert large images between storage models, in parallel |
+| `OPENXISF_WITH_OPENSSL` | `OFF` | Compute checksums with OpenSSL (libcrypto), several times faster than the built-in code |
 | `OPENXISF_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors (CI turns it on) |
 | `OPENXISF_HARDENING` | `OFF` | Compile with hardening flags (the presets turn it on) |
 | `OPENXISF_SANITIZE` | empty | Sanitizers for the library and the tests: `address;undefined`, `thread` or `fuzzer;address;undefined` (Clang) |
@@ -152,6 +161,22 @@ const bool header_only = arguments.size() == 3 && arguments[1] == "--header-only
 // Without the ancillary data, file.load_ancillary_data() would load them later.
 const openxisf::reader file(arguments.back(), {.header_only = header_only});
 ```
+
+An application shows an image through the algorithms of the specification. This excerpt of `samples/preview.cpp`
+stretches the samples of an image, normalized to [0, 1] by its representable range, with its display function, or with
+one that the adaptive algorithm computes from the statistics of its channels; a CIE L*a*b* image is converted to RGB
+first, and the preview is turned to the orientation of the image, which is meant for showing it only:
+
+```cpp
+const bool adaptive = choice.adaptive || !info.display_function;
+const openxisf::display_function function =
+    adaptive
+        ? openxisf::adaptive_display_function(std::as_bytes(std::span(samples)), info, {.linked = choice.linked})
+        : info.display_function.value_or(openxisf::display_function{});
+```
+
+Each sample `x` of channel `channel` is then shown as `openxisf::apply_display_function(function, channel, x)`.
+`read_info` writes property values with `openxisf::format_value()`, as the format specifier of each property asks.
 
 A unit is written with `openxisf::writer`, from the same model that the reader returns, so that a unit read can be
 written again. This excerpt of `samples/write_image.cpp` writes an image with properties, FITS keywords and a
@@ -249,7 +274,9 @@ These are the design rules. They take effect as the API arrives.
   number of threads at once, also to read pixels; `load_ancillary_data()`, the only one that changes it, needs exclusive
   access. Writers and values are thread-compatible, like standard containers. The file
   and memory sources can be read from any number of threads at once; the library calls a source that does not declare
-  concurrent reads from one thread at a time.
+  concurrent reads from one thread at a time. Built with oneTBB, the library also works in parallel within one call, in
+  the task arena of the calling thread and without changing the global settings of oneTBB; sources, sinks and progress
+  functions are still called from the calling thread.
 - **Errors.** Failures are exceptions derived from `openxisf::error`, one class per kind of failure, each with an error
   code. A problem confined to one object of a unit, such as an unsupported codec, makes that object unavailable and is
   reported as a diagnostic, in `reader::diagnostics()`; the rest of the unit stays readable. Harmless deviations from

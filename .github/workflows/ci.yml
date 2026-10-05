@@ -143,12 +143,13 @@ jobs:
             preset: linux-gcc-release
             cxx: g++-14
             args: -DBUILD_SHARED_LIBS=ON
+          # Also builds the benchmarks, which run in oneTBB task arenas, and runs each once.
           - name: gcc-14 x64 release with oneTBB and OpenSSL
             runner: ubuntu-24.04
             preset: linux-gcc-release
             cxx: g++-14
-            args: -DOPENXISF_WITH_TBB=ON -DOPENXISF_WITH_OPENSSL=ON
-            packages: libtbb-dev libssl-dev
+            args: -DOPENXISF_WITH_TBB=ON -DOPENXISF_WITH_OPENSSL=ON -DOPENXISF_BUILD_BENCHMARKS=ON
+            packages: libtbb-dev libssl-dev libbenchmark-dev
           - name: gcc arm64 release
             runner: ubuntu-24.04-arm
             preset: linux-gcc-release
@@ -284,19 +285,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev \
-            libbenchmark-dev
+            libbenchmark-dev libtbb-dev libssl-dev
           pip install clang-tidy==22.1.8
 
-      # The configure step generates version.h and the compilation database. Nothing needs building.
+      # The configure step generates version.h and the compilation database. Nothing needs building. With oneTBB and
+      # OpenSSL, the code that uses them is analyzed too.
       - name: Configure
-        run: cmake --preset linux-clang-release -DCMAKE_CXX_COMPILER=clang++-18 -DOPENXISF_BUILD_BENCHMARKS=ON
+        run: |
+          cmake --preset linux-clang-release -DCMAKE_CXX_COMPILER=clang++-18 -DOPENXISF_BUILD_BENCHMARKS=ON \
+            -DOPENXISF_WITH_TBB=ON -DOPENXISF_WITH_OPENSSL=ON
 
       # tests/package/main.cpp is built by its own project, which defines EXPECTED_VERSION. The Windows platform layer
       # (*_win32.cpp) does not compile on Linux.
       - name: clang-tidy
         run: |
           git ls-files '*.cpp' ':!:*_win32.cpp' | xargs -P "$(nproc)" -n 1 \
-            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.3.0"'
+            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.4.0"'
 
   # The units that the tests write, checked by others than the library: every header against the XML schema of XISF,
   # which is downloaded here and never committed, and every unit by an independent reader, xisftool of xisf-rs (MIT),

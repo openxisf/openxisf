@@ -23,6 +23,7 @@ namespace {
 
 using openxisf::errc;
 using openxisf::detail::shuffle_bytes;
+using openxisf::detail::shuffle_kernel;
 using openxisf::detail::unshuffle_bytes;
 using openxisf::test::bytes;
 using openxisf::test::pattern;
@@ -152,6 +153,59 @@ TEST(shuffle, a_part_must_lie_within_the_block)
                                               [&] { openxisf::detail::shuffle_part(input, 2, 2, output); }));
     EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
                                               [&] { openxisf::detail::shuffle_part(input, 2, 5, {}); }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The SIMD kernels, which move 16 items at a time, against the scalar code. Item sizes without a kernel are checked
+// too, since they must fall back to the scalar code.
+
+TEST(shuffle, the_simd_kernels_give_the_bytes_of_the_scalar_code)
+{
+    for (const std::size_t item_size : {2U, 3U, 4U, 8U, 16U}) {
+        // Numbers of items on both sides of the multiples of 16, and every tail.
+        for (std::size_t items = 0; items <= 70; ++items) {
+            for (std::size_t tail = 0; tail < item_size; ++tail) {
+                const std::vector<std::byte> input = pattern((items * item_size) + tail);
+                std::vector<std::byte> scalar(input.size());
+                std::vector<std::byte> simd(input.size());
+                shuffle_bytes(input, scalar, item_size, shuffle_kernel::scalar);
+                shuffle_bytes(input, simd, item_size, shuffle_kernel::simd);
+                ASSERT_EQ(simd, scalar) << "shuffled items of " << item_size << ", " << items << " items, tail "
+                                        << tail;
+                unshuffle_bytes(input, scalar, item_size, shuffle_kernel::scalar);
+                unshuffle_bytes(input, simd, item_size, shuffle_kernel::simd);
+                ASSERT_EQ(simd, scalar) << "unshuffled items of " << item_size << ", " << items << " items, tail "
+                                        << tail;
+            }
+        }
+    }
+}
+
+TEST(shuffle, the_simd_kernels_give_every_part_of_the_scalar_code)
+{
+    // Every window of a block of 40 items and a tail, so that parts start and end inside the 16 items of a kernel.
+    for (const std::size_t item_size : {2U, 4U, 8U}) {
+        const std::vector<std::byte> input = pattern((40 * item_size) + item_size - 1);
+        const std::vector<std::byte> whole = shuffled(input, item_size);
+        for (std::size_t offset = 0; offset <= input.size(); ++offset) {
+            for (std::size_t length = 0; offset + length <= input.size(); ++length) {
+                std::vector<std::byte> part(length);
+                openxisf::detail::shuffle_part(input, item_size, offset, part, shuffle_kernel::simd);
+                ASSERT_TRUE(std::equal(part.begin(), part.end(), whole.begin() + static_cast<std::ptrdiff_t>(offset)))
+                    << "items of " << item_size << ", " << length << " bytes at " << offset;
+            }
+        }
+    }
+}
+
+TEST(shuffle, the_kernels_of_the_build_are_known)
+{
+    // SSE2 is part of every x86-64 processor; other processors use the scalar code.
+#if defined(OPENXISF_ENABLE_SIMD) && (defined(__x86_64__) || defined(_M_X64)) && !defined(_M_ARM64EC)
+    EXPECT_TRUE(openxisf::detail::has_simd_shuffle());
+#else
+    EXPECT_FALSE(openxisf::detail::has_simd_shuffle());
+#endif
 }
 
 } // namespace

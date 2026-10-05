@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "openxisf",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "C++20 library for reading and writing XISF files",
   "homepage": "https://github.com/openxisf/openxisf",
   "license": "Apache-2.0",
@@ -22,13 +22,13 @@
   ],
   "features": {
     "tbb": {
-      "description": "Parallel processing of independent subblocks with oneTBB",
+      "description": "Parallel compression and decompression of subblocks, and conversion of large images, with oneTBB",
       "dependencies": [
         "tbb"
       ]
     },
     "openssl": {
-      "description": "Checksums computed by OpenSSL",
+      "description": "Checksums computed by OpenSSL (libcrypto)",
       "dependencies": [
         "openssl"
       ]

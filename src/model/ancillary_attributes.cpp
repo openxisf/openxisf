@@ -3,6 +3,8 @@
 
 #include "model/ancillary_attributes.h"
 
+#include <openxisf/color.h>
+
 #include "core/quote.h"
 #include "core/text_grammar.h"
 
@@ -16,10 +18,6 @@
 namespace openxisf::detail {
 
 namespace {
-
-// The CIE XYZ tristimulus values of the D50 reference white, with Y = 1 (spec §8.5.4.1).
-constexpr double d50_x = 0.96422;
-constexpr double d50_z = 0.82521;
 
 // The elements of a colour filter array (spec §11.10.1, Table 18).
 constexpr std::string_view cfa_elements = "0RGBWCMY";
@@ -53,13 +51,6 @@ void parse_float_list(std::string_view text, std::span<double> values, errc code
         }
         start = colon + 1;
     }
-}
-
-double determinant(const std::array<std::array<double, 3>, 3>& m) noexcept
-{
-    return (m[0][0] * ((m[1][1] * m[2][2]) - (m[1][2] * m[2][1]))) -
-           (m[0][1] * ((m[1][0] * m[2][2]) - (m[1][2] * m[2][0]))) +
-           (m[0][2] * ((m[1][0] * m[2][1]) - (m[1][1] * m[2][0])));
 }
 
 bool in_unit_range(double value) noexcept
@@ -123,45 +114,12 @@ std::array<double, 4> parse_quadruplet(std::string_view text, errc code)
     return values;
 }
 
-std::optional<std::array<double, 3>> derive_luminance(const std::array<double, 3>& x,
-                                                      const std::array<double, 3>& y) noexcept
-{
-    if (std::ranges::any_of(y, [](double value) { return value == 0.0; })) {
-        return std::nullopt;
-    }
-    // Spec §8.5.4.1, equation [3]: the tristimulus values of each primary per unit of luminance, by columns, give the
-    // reference white from the luminance coefficients. Cramer's rule solves the system.
-    std::array<std::array<double, 3>, 3> system{};
-    for (std::size_t i = 0; i < 3; ++i) {
-        system[0][i] = x[i] / y[i];
-        system[1][i] = 1.0;
-        system[2][i] = (1.0 - x[i] - y[i]) / y[i];
-    }
-    const double whole = determinant(system);
-    if (whole == 0.0 || !std::isfinite(whole)) {
-        return std::nullopt;
-    }
-    constexpr std::array<double, 3> white{d50_x, 1.0, d50_z};
-    std::array<double, 3> luminance{};
-    for (std::size_t i = 0; i < 3; ++i) {
-        std::array<std::array<double, 3>, 3> replaced = system;
-        for (std::size_t row = 0; row < 3; ++row) {
-            replaced[row][i] = white[row];
-        }
-        luminance[i] = determinant(replaced) / whole;
-        if (!std::isfinite(luminance[i])) {
-            return std::nullopt;
-        }
-    }
-    return luminance;
-}
-
 std::array<double, 3> check_rgb_working_space(const rgb_working_space& space)
 {
     check_unit_range(space.x, "x chromaticity coordinates");
     check_unit_range(space.y, "y chromaticity coordinates");
     check_unit_range(space.luminance, "luminance coefficients");
-    const std::optional<std::array<double, 3>> derived = derive_luminance(space.x, space.y);
+    const std::optional<std::array<double, 3>> derived = luminance_coefficients(space.x, space.y);
     if (!derived) {
         throw invalid_data_error(errc::invalid_rgb_working_space,
                                  "the chromaticity coordinates of the primaries do not define an RGB working space");

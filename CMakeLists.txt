@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(openxisf
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "C++20 library for reading and writing XISF files"
     HOMEPAGE_URL "https://github.com/openxisf/openxisf"
     LANGUAGES CXX)
@@ -31,6 +31,7 @@ option(OPENXISF_BUILD_FUZZERS
     "Build the fuzz targets: libFuzzer programs when OPENXISF_SANITIZE holds 'fuzzer', seed replays otherwise" OFF)
 option(OPENXISF_BUILD_DOCS "Add the docs target that builds the API documentation with Doxygen" OFF)
 option(OPENXISF_INSTALL "Generate the install rules" ${PROJECT_IS_TOP_LEVEL})
+option(OPENXISF_ENABLE_SIMD "Use the SIMD kernels of byte shuffling (SSE2 on x86-64)" ON)
 option(OPENXISF_WITH_TBB "Use oneTBB for parallel work" OFF)
 option(OPENXISF_WITH_OPENSSL "Use OpenSSL (libcrypto) for hashing" OFF)
 option(OPENXISF_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
