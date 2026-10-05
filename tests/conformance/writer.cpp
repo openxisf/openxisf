@@ -1315,4 +1315,27 @@ TEST(conformance_writer, failures_of_the_sink_pass_through)
     }
 }
 
+// Spec §11.5.3.7.6 and §11.5.3.7.8: an encoder keeps the properties of a solution as it is given them, those of a
+// revision of spec §11.5.3.7 that it does not read included, whatever their types; the types of revision 1 apply to a
+// solution of revision 1.
+TEST(conformance_writer, the_properties_of_an_astrometric_solution_are_kept_as_they_are)
+{
+    image_info image = simple_image(openxisf::sample_format::uint16, {2, 2}, 1);
+    image.properties.set("AstrometricSolution:Version", "2.0");
+    image.properties.set("AstrometricSolution:ReferenceCelestialCoordinates", "83.8 -5.4");
+    image.properties.set("AstrometricSolution:Future:Kernel", std::vector<double>{1.0, 2.0});
+    const std::array<std::uint16_t, 4> samples{1, 2, 3, 4};
+    openxisf::writer output(basic_options());
+    (void)output.add_image(image, std::span<const std::uint16_t>(samples));
+    const openxisf::reader unit = open_strictly(written(output));
+    EXPECT_TRUE(openxisf::test::no_diagnostics(unit.diagnostics()));
+    EXPECT_EQ(unit.image(0).properties, image.properties);
+
+    image.properties.set("AstrometricSolution:Version", "1.0");
+    openxisf::writer refused(basic_options());
+    (void)refused.add_image(image, std::span<const std::uint16_t>(samples));
+    EXPECT_TRUE(openxisf::test::throws<openxisf::validation_error>(errc::reserved_property_type,
+                                                                   [&] { (void)written(refused); }));
+}
+
 } // namespace

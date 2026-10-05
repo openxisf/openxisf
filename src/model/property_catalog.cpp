@@ -6,7 +6,12 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
 
 namespace openxisf::detail {
 
@@ -204,6 +209,52 @@ std::optional<property_type> reserved_property_type(std::string_view id) noexcep
 bool is_metadata_id(std::string_view id) noexcept
 {
     return id.starts_with("XISF:");
+}
+
+bool is_astrometric_solution_id(std::string_view id) noexcept
+{
+    return id.starts_with("AstrometricSolution:");
+}
+
+std::optional<std::array<std::uint32_t, 2>> parse_astrometric_version(std::string_view text) noexcept
+{
+    const std::size_t dot = text.find('.');
+    if (dot == std::string_view::npos) {
+        return std::nullopt;
+    }
+    std::array<std::uint32_t, 2> revision{};
+    const std::array<std::string_view, 2> parts{text.substr(0, dot), text.substr(dot + 1)};
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (parts[i].empty()) {
+            return std::nullopt;
+        }
+        for (const char c : parts[i]) {
+            if (c < '0' || c > '9') {
+                return std::nullopt;
+            }
+            const auto digit = static_cast<std::uint32_t>(c - '0');
+            if (revision[i] > (std::numeric_limits<std::uint32_t>::max() - digit) / 10) {
+                return std::nullopt;
+            }
+            revision[i] = revision[i] * 10 + digit;
+        }
+    }
+    return revision;
+}
+
+bool is_foreign_astrometric_version(const property_value& version) noexcept
+{
+    if (version.type() != property_type::string) {
+        return false;
+    }
+    const std::optional<std::array<std::uint32_t, 2>> revision = parse_astrometric_version(version.get<std::string>());
+    return !revision || (*revision)[0] != 1;
+}
+
+bool has_foreign_astrometric_solution(const property_list& properties) noexcept
+{
+    const property* version = properties.find("AstrometricSolution:Version");
+    return version != nullptr && is_foreign_astrometric_version(version->value);
 }
 
 } // namespace openxisf::detail

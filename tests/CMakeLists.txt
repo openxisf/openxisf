@@ -5,6 +5,7 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(openxisf_tests
+    concurrency/astrometry.cpp
     concurrency/io.cpp
     concurrency/pixels.cpp
     concurrency/writer.cpp
@@ -30,6 +31,7 @@ add_executable(openxisf_tests
     conformance/thumbnail.cpp
     conformance/writer.cpp
     conformance/writer_validation.cpp
+    samples/astrometry.cpp
     samples/group_a.cpp
     samples/group_b.cpp
     samples/group_c.cpp
@@ -44,9 +46,11 @@ add_executable(openxisf_tests
     support/temp_directory.cpp
     support/written_unit.cpp
     unit/ancillary_attributes.cpp
+    unit/astrometry.cpp
     unit/block_attributes.cpp
     unit/blocks_file.cpp
     unit/callback_io.cpp
+    unit/celestial_sphere.cpp
     unit/checked_math.cpp
     unit/codecs.cpp
     unit/color.cpp
@@ -56,6 +60,7 @@ add_executable(openxisf_tests
     unit/data_encoding.cpp
     unit/diagnostic_log.cpp
     unit/display.cpp
+    unit/distortion_model.cpp
     unit/endian.cpp
     unit/error.cpp
     unit/file_io.cpp

@@ -115,14 +115,16 @@ void check_value(const property_value& value, const std::string& element, std::s
     }
 }
 
-void check_property(const property& item, std::size_t position, const std::string& parent)
+// The properties of an astrometric solution of another revision than 1.x are kept as they are, whatever their types
+// (spec §11.5.3.7.6): foreign_solution says that the solution of the object of item is such.
+void check_property(const property& item, std::size_t position, const std::string& parent, bool foreign_solution)
 {
     const std::string element = parent + "/" + id_step("Property", item.id, position);
     if (!is_property_id(item.id)) {
         fail(errc::invalid_property_id, quote(item.id) + " is not a property identifier (spec §8.4.1)", element, "id");
     }
     if (const std::optional<property_type> reserved = reserved_property_type(item.id);
-        reserved && *reserved != item.value.type()) {
+        reserved && *reserved != item.value.type() && !(foreign_solution && is_astrometric_solution_id(item.id))) {
         fail(errc::reserved_property_type,
              "the property " + item.id + " is a " + std::string(type_name(item.value.type())) +
                  ", and the specification makes it a " + std::string(type_name(*reserved)),
@@ -189,8 +191,9 @@ void check_properties(const property_list& properties, const std::vector<table>&
 {
     std::unordered_set<std::string_view> ids;
     std::size_t position = 0;
+    const bool foreign_solution = has_foreign_astrometric_solution(properties);
     for (const property& item : properties) {
-        check_property(item, ++position, parent);
+        check_property(item, ++position, parent, foreign_solution);
         ids.insert(item.id);
     }
     for (std::size_t i = 0; i < tables.size(); ++i) {
@@ -234,7 +237,7 @@ void check_metadata(const property_list& metadata, const write_options& options)
             fail(errc::invalid_metadata, "the property " + quote(item.id) + " of the unit is not in the XISF namespace",
                  element + "/" + id_step("Property", item.id, position), "id");
         }
-        check_property(item, position, element);
+        check_property(item, position, element, false);
     }
 }
 

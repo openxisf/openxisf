@@ -53,7 +53,7 @@ TEST_P(samples_structure, has_the_metadata_of_pixinsight)
 {
     const openxisf::reader file(openxisf::test::sample_path(GetParam()));
     const openxisf::property_list& metadata = file.metadata();
-    EXPECT_EQ(metadata.at("XISF:CreatorApplication").value, openxisf::property_value("PixInsight 1.9.4"));
+    EXPECT_EQ(metadata.at("XISF:CreatorApplication").value, openxisf::property_value(GetParam().application));
     EXPECT_EQ(metadata.at("XISF:CreatorModule").value, openxisf::property_value("XISF module version 1.1.3"));
     EXPECT_EQ(metadata.at("XISF:CreatorOS").value, openxisf::property_value("Windows"));
     // The String of the creation time holds a TimePoint of the day the samples were written.

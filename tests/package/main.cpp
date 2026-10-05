@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -263,6 +264,37 @@ bool runs_the_algorithms_through_the_library()
     return false;
 }
 
+// An astrometric solution across the boundary: a class whose copies share their data, the evaluation in both
+// directions, the removal of a solution, and a usage_error caught by its type.
+bool evaluates_astrometric_solutions_through_the_library()
+{
+    openxisf::property_list properties;
+    properties.set("AstrometricSolution:Version", "1.0");
+    properties.set("AstrometricSolution:ProjectionSystem", "Gnomonic");
+    properties.set("AstrometricSolution:ReferenceCelestialCoordinates", std::vector<double>{83.8, -5.4});
+    properties.set("AstrometricSolution:ReferenceImageCoordinates", std::vector<double>{200.0, 150.0});
+    properties.set("AstrometricSolution:LinearTransformationMatrix",
+                   openxisf::property_value::matrix(2, 2, std::vector<double>{-0.01, 0.0, 0.0, -0.01}));
+    const openxisf::astrometric_solution solution(properties);
+    openxisf::astrometric_solution copy{openxisf::property_list{}};
+    copy = solution;
+    const std::optional<openxisf::celestial_point> centre = copy.image_to_celestial({.x = 200.0, .y = 150.0});
+    if (copy.layer() != openxisf::astrometric_layer::linear || !centre || std::abs(centre->ra - 83.8) > 1e-12 ||
+        std::abs(centre->dec + 5.4) > 1e-12) {
+        return false;
+    }
+    const std::optional<openxisf::image_point> back = solution.celestial_to_image(*centre);
+    if (!back || std::abs(back->x - 200.0) > 1e-9 || openxisf::remove_astrometric_solution(properties) != 5) {
+        return false;
+    }
+    try {
+        (void)solution.image_to_celestial({}, openxisf::astrometric_layer::distortion);
+    } catch (const openxisf::usage_error& failure) {
+        return failure.code() == openxisf::errc::invalid_argument;
+    }
+    return false;
+}
+
 } // namespace
 
 // Built against an installed package. It fails when the header, the library and the package version file
@@ -311,6 +343,10 @@ int main()
         }
         if (!runs_the_algorithms_through_the_library()) {
             std::cerr << "the algorithms of the library do not work as expected\n";
+            return 1;
+        }
+        if (!evaluates_astrometric_solutions_through_the_library()) {
+            std::cerr << "the astrometric solutions of the library do not work as expected\n";
             return 1;
         }
         return 0;
