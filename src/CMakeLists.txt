@@ -8,6 +8,7 @@ configure_file(
 
 # The internal code, in namespace openxisf::detail.
 set(internal_sources
+    algorithms/pixel_values.cpp
     codec/compressed_block.cpp
     codec/compression.cpp
     codec/lz4_codec.cpp
@@ -24,6 +25,7 @@ set(internal_sources
     core/data_encoding.cpp
     core/diagnostic_log.cpp
     core/endian.cpp
+    core/parallel.cpp
     core/quote.cpp
     core/text_grammar.cpp
     core/utc_time.cpp
@@ -71,6 +73,10 @@ endif()
 # The public API.
 set(public_sources
     error.cpp
+    algorithms/color.cpp
+    algorithms/display.cpp
+    algorithms/format.cpp
+    algorithms/orientation.cpp
     image.cpp
     property.cpp
     reader.cpp
@@ -125,6 +131,15 @@ if(OPENXISF_WITH_OPENSSL)
 endif()
 target_link_libraries(openxisf PRIVATE ${private_dependencies})
 
+# The optional parts of the internal code, which the tests and benchmarks see too.
+set(internal_definitions "")
+foreach(option OPENXISF_ENABLE_SIMD OPENXISF_WITH_TBB OPENXISF_WITH_OPENSSL)
+    if(${option})
+        list(APPEND internal_definitions ${option})
+    endif()
+endforeach()
+target_compile_definitions(openxisf PRIVATE ${internal_definitions})
+
 openxisf_enable_warnings(openxisf)
 openxisf_enable_sanitizers(openxisf)
 if(OPENXISF_HARDENING)
@@ -137,6 +152,7 @@ endif()
 add_library(openxisf_internal INTERFACE)
 target_include_directories(openxisf_internal INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(openxisf_internal INTERFACE openxisf::openxisf ${private_dependencies})
+target_compile_definitions(openxisf_internal INTERFACE ${internal_definitions})
 if(OPENXISF_SHARED)
     list(TRANSFORM internal_sources PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
     target_sources(openxisf_internal INTERFACE ${internal_sources})

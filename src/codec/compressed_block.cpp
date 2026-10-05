@@ -8,6 +8,8 @@
 #include "codec/codecs.h"
 #include "codec/shuffle.h"
 #include "core/checked_math.h"
+#include "core/parallel.h"
+#include "core/scratch_buffer.h"
 
 #include <algorithm>
 #include <limits>
@@ -19,6 +21,10 @@ namespace openxisf::detail {
 namespace {
 
 constexpr int highest_level = 100;
+
+// The subblocks that compress_subblocks() compresses at once hold at most about this many bytes, unless one alone is
+// larger.
+constexpr std::uint64_t parallel_compression_budget = std::uint64_t{1} << 30;
 
 // The sum of the sizes, or nothing when it does not fit in 64 bits.
 std::optional<std::uint64_t> total(const std::vector<subblock>& subblocks, std::uint64_t subblock::* size) noexcept
@@ -202,28 +208,40 @@ std::vector<subblock> subblocks_of(const block_compression& compression, std::ui
     return subblocks;
 }
 
-std::vector<std::byte> decompress_block(std::span<const std::byte> stored, const block_compression& compression,
-                                        const limits& limits, const subblock_progress& progress)
+namespace {
+
+// The decompressed block is allocated by the library: its uncompressed size must be within the limit.
+void check_allocation(const block_compression& compression, const limits& limits)
 {
-    const std::vector<subblock> subblocks = subblocks_of(compression, stored.size());
     if (limits.max_allocation != 0 && compression.uncompressed_size > limits.max_allocation) {
         throw limit_error(errc::allocation_too_large,
                           "the data block decompresses to " + std::to_string(compression.uncompressed_size) +
                               " bytes, more than the allocation limit of " + std::to_string(limits.max_allocation));
     }
+}
 
-    std::vector<std::byte> data(checked_cast<std::size_t>(compression.uncompressed_size));
-    std::size_t in = 0;
-    std::size_t out = 0;
+// Decompresses the subblocks of a block, which subblocks_of() checked, each into its place in data, which has the
+// uncompressed size of the block. The subblocks are independent, so each batch of as many as the threads that can run
+// at once is decompressed in parallel; progress follows on the calling thread, subblock by subblock, after each batch.
+void decompress_subblocks(std::span<const std::byte> stored, compression_codec codec,
+                          const std::vector<subblock>& subblocks, const limits& limits, std::span<std::byte> data,
+                          const subblock_progress& progress)
+{
+    // Where each subblock starts in stored and in data, and where the last one ends.
+    std::vector<std::size_t> in(subblocks.size() + 1);
+    std::vector<std::size_t> out(subblocks.size() + 1);
     for (std::size_t i = 0; i < subblocks.size(); ++i) {
-        const auto compressed = static_cast<std::size_t>(subblocks[i].compressed_size);
-        const auto uncompressed = static_cast<std::size_t>(subblocks[i].uncompressed_size);
+        in[i + 1] = in[i] + static_cast<std::size_t>(subblocks[i].compressed_size);
+        out[i + 1] = out[i] + static_cast<std::size_t>(subblocks[i].uncompressed_size);
+    }
+    const auto decompress = [&](std::size_t i) {
+        const std::span<const std::byte> input = stored.subspan(in[i], in[i + 1] - in[i]);
+        const std::span<std::byte> output = data.subspan(out[i], out[i + 1] - out[i]);
         try {
             if (stored_as_is(subblocks[i])) {
-                std::ranges::copy(stored.subspan(in, compressed), data.begin() + static_cast<std::ptrdiff_t>(out));
+                std::ranges::copy(input, output.begin());
             } else {
-                decompress_subblock(compression.codec, stored.subspan(in, compressed),
-                                    std::span(data).subspan(out, uncompressed), limits);
+                decompress_subblock(codec, input, output, limits);
             }
         } catch (const integrity_error& failure) {
             if (subblocks.size() == 1) {
@@ -232,19 +250,57 @@ std::vector<std::byte> decompress_block(std::span<const std::byte> stored, const
             throw integrity_error(failure.code(), "subblock " + std::to_string(i + 1) + " of " +
                                                       std::to_string(subblocks.size()) + ": " + failure.what());
         }
-        in += compressed;
-        out += uncompressed;
+    };
+    const std::size_t batch = concurrency();
+    for (std::size_t first = 0; first < subblocks.size(); first += batch) {
+        const std::size_t count = std::min(batch, subblocks.size() - first);
+        parallel_for(count, [&](std::size_t k) { decompress(first + k); });
         if (progress) {
-            progress(out);
+            for (std::size_t i = first; i < first + count; ++i) {
+                progress(out[i + 1]);
+            }
         }
     }
+}
 
+// Decompresses a block into destination, which has its uncompressed size, through a buffer when it is shuffled.
+void decompress_into(std::span<const std::byte> stored, const block_compression& compression,
+                     const std::vector<subblock>& subblocks, const limits& limits, std::span<std::byte> destination,
+                     const subblock_progress& progress)
+{
     if (compression.item_size <= 1) {
-        return data;
+        decompress_subblocks(stored, compression.codec, subblocks, limits, destination, progress);
+        return;
     }
-    std::vector<std::byte> unshuffled(data.size());
-    unshuffle_bytes(data, unshuffled, static_cast<std::size_t>(compression.item_size));
-    return unshuffled;
+    check_allocation(compression, limits);
+    // The subblocks fill it or throw.
+    scratch_buffer shuffled(destination.size());
+    decompress_subblocks(stored, compression.codec, subblocks, limits, shuffled.bytes(), progress);
+    unshuffle_bytes(shuffled.bytes(), destination, static_cast<std::size_t>(compression.item_size));
+}
+
+} // namespace
+
+std::vector<std::byte> decompress_block(std::span<const std::byte> stored, const block_compression& compression,
+                                        const limits& limits, const subblock_progress& progress)
+{
+    const std::vector<subblock> subblocks = subblocks_of(compression, stored.size());
+    check_allocation(compression, limits);
+    std::vector<std::byte> data(checked_cast<std::size_t>(compression.uncompressed_size));
+    decompress_into(stored, compression, subblocks, limits, data, progress);
+    return data;
+}
+
+void decompress_block_into(std::span<const std::byte> stored, const block_compression& compression,
+                           const limits& limits, std::span<std::byte> destination, const subblock_progress& progress)
+{
+    const std::vector<subblock> subblocks = subblocks_of(compression, stored.size());
+    if (destination.size() != compression.uncompressed_size) {
+        throw usage_error(errc::invalid_argument, "the destination has " + std::to_string(destination.size()) +
+                                                      " bytes, and the data block decompresses to " +
+                                                      std::to_string(compression.uncompressed_size));
+    }
+    decompress_into(stored, compression, subblocks, limits, destination, progress);
 }
 
 block_compression compress_subblocks(std::span<const std::byte> data, const compression_options& options,
@@ -253,27 +309,48 @@ block_compression compress_subblocks(std::span<const std::byte> data, const comp
     const int level = codec_level(options.codec, options.level);
     const std::uint64_t limit = subblock_size(options);
     const bool shuffled = options.item_size > 1;
+    // An empty block is one empty subblock.
+    const std::uint64_t count = data.empty() ? 1 : (data.size() / limit) + (data.size() % limit == 0 ? 0 : 1);
 
-    block_compression result{.codec = options.codec, .uncompressed_size = data.size(), .item_size = options.item_size};
-    std::vector<std::byte> part;
-    std::vector<std::byte> output;
-    std::size_t offset = 0;
-    do {
-        const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(limit, data.size() - offset));
-        std::span<const std::byte> input = data.subspan(offset, size);
+    // A subblock in the making: its data, shuffled when they are, and the output of the codec.
+    struct piece
+    {
+        std::span<const std::byte> input{};
+        std::vector<std::byte> shuffled_input{};
+        std::vector<std::byte> output{};
+    };
+    const auto compress = [&](std::uint64_t index, piece& next) {
+        const std::size_t offset = index * limit;
+        const std::size_t size = std::min<std::uint64_t>(limit, data.size() - offset);
+        next.input = data.subspan(offset, size);
         if (shuffled) {
-            part.resize(size);
-            shuffle_part(data, static_cast<std::size_t>(options.item_size), offset, part);
-            input = part;
+            next.shuffled_input.resize(size);
+            shuffle_part(data, static_cast<std::size_t>(options.item_size), offset, next.shuffled_input);
+            next.input = next.shuffled_input;
         }
-        output.clear();
-        compress_subblock(options.codec, input, level, output);
-        const std::span<const std::byte> stored = output.size() >= size ? input : std::span<const std::byte>(output);
-        const subblock sizes{.compressed_size = stored.size(), .uncompressed_size = size};
-        store(stored, sizes);
-        result.subblocks.push_back(sizes);
-        offset += size;
-    } while (offset < data.size());
+        next.output.clear();
+        compress_subblock(options.codec, next.input, level, next.output);
+    };
+
+    // The subblocks are independent, so a batch of them is compressed in parallel, as many as the threads that can run
+    // at once within a budget of memory, and they are stored in order on the calling thread.
+    const std::uint64_t batch =
+        std::min<std::uint64_t>(concurrency(), std::max<std::uint64_t>(1, parallel_compression_budget / limit));
+    const std::size_t in_flight = std::min(batch, count);
+    std::vector<piece> pieces(in_flight);
+    block_compression result{.codec = options.codec, .uncompressed_size = data.size(), .item_size = options.item_size};
+    for (std::uint64_t first = 0; first < count; first += batch) {
+        const std::size_t size = std::min(batch, count - first);
+        parallel_for(size, [&](std::size_t k) { compress(first + k, pieces[k]); });
+        for (std::size_t k = 0; k < size; ++k) {
+            const piece& done = pieces[k];
+            const std::span<const std::byte> stored =
+                done.output.size() >= done.input.size() ? done.input : std::span<const std::byte>(done.output);
+            const subblock sizes{.compressed_size = stored.size(), .uncompressed_size = done.input.size()};
+            store(stored, sizes);
+            result.subblocks.push_back(sizes);
+        }
+    }
     return result;
 }
 

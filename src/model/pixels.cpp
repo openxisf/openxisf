@@ -7,7 +7,6 @@
 
 #include "model/pixel_layout.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -15,8 +14,25 @@ namespace openxisf::detail {
 
 namespace {
 
+// The progress of the read of an available block, which reports to options.progress and throws cancelled_error when it
+// returns false; empty without options.progress. It is first called before anything is read.
+block_progress start_progress(const pixel_read_options& options, const data_block& block,
+                              const block_descriptor& descriptor)
+{
+    if (!options.progress) {
+        return {};
+    }
+    block_progress progress = [&options, &block, total = work_size(descriptor)](std::uint64_t done) {
+        if (!options.progress(done, total)) {
+            throw cancelled_error(errc::cancelled, "the read of the pixel data was cancelled", {.element = block.path});
+        }
+    };
+    progress(0);
+    return progress;
+}
+
 // The data of the block of the image at index, in native byte order. options.progress follows the read and can cancel
-// it; it is first called before anything is read.
+// it.
 std::vector<std::byte> read_native(const unit& opened, std::size_t index, const image_info& info,
                                    const pixel_read_options& options, std::size_t piece_size)
 {
@@ -26,19 +42,27 @@ std::vector<std::byte> read_native(const unit& opened, std::size_t index, const 
         return read_block(opened.source, block, opened.limits);
     }
     const block_descriptor& descriptor = *block.descriptor;
-    block_progress progress;
-    if (options.progress) {
-        progress = [&options, &block, total = work_size(descriptor)](std::uint64_t done) {
-            if (!options.progress(done, total)) {
-                throw cancelled_error(errc::cancelled, "the read of the pixel data was cancelled",
-                                      {.element = block.path});
-            }
-        };
-        progress(0);
-    }
-    std::vector<std::byte> data = read_block(opened.source, block, opened.limits, progress, piece_size);
+    std::vector<std::byte> data =
+        read_block(opened.source, block, opened.limits, start_progress(options, block, descriptor), piece_size);
     to_native_byte_order(data, info.sample_format, descriptor.order);
     return data;
+}
+
+// Reads the data of the block of the image at index into destination, which has their size, in native byte order:
+// straight from the source when the block is not compressed, so that no buffer of the size of the image is needed.
+void read_native_into(const unit& opened, std::size_t index, const image_info& info, std::span<std::byte> destination,
+                      const pixel_read_options& options, std::size_t piece_size)
+{
+    const data_block& block = opened.blocks[opened.images.blocks[index]];
+    if (!block.descriptor) {
+        // Throws the error of the unavailable block, before anything is read.
+        read_block_into(opened.source, block, opened.limits, destination);
+        return;
+    }
+    const block_descriptor& descriptor = *block.descriptor;
+    read_block_into(opened.source, block, opened.limits, destination, start_progress(options, block, descriptor),
+                    piece_size);
+    to_native_byte_order(destination, info.sample_format, descriptor.order);
 }
 
 // True when the samples must change their storage model to the one asked for. A single channel is stored the same way
@@ -89,11 +113,10 @@ void read_pixels(const unit& opened, std::size_t index, std::span<std::byte> des
                                                       " bytes, and the pixel data of image " + std::to_string(index) +
                                                       " have " + std::to_string(size));
     }
-    const std::vector<std::byte> data = read_native(opened, index, info, options, piece_size);
     if (converts_storage(info, options)) {
-        convert(info, data, destination);
+        convert(info, read_native(opened, index, info, options, piece_size), destination);
     } else {
-        std::ranges::copy(data, destination.begin());
+        read_native_into(opened, index, info, destination, options, piece_size);
     }
 }
 

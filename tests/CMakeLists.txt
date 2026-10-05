@@ -49,15 +49,18 @@ add_executable(openxisf_tests
     unit/callback_io.cpp
     unit/checked_math.cpp
     unit/codecs.cpp
+    unit/color.cpp
     unit/compressed_block.cpp
     unit/container.cpp
     unit/data_block.cpp
     unit/data_encoding.cpp
     unit/diagnostic_log.cpp
+    unit/display.cpp
     unit/endian.cpp
     unit/error.cpp
     unit/file_io.cpp
     unit/file_resolver.cpp
+    unit/format.cpp
     unit/format_specifier.cpp
     unit/hash.cpp
     unit/held_size.cpp
@@ -67,6 +70,7 @@ add_executable(openxisf_tests
     unit/limits.cpp
     unit/memory_io.cpp
     unit/namespaces.cpp
+    unit/orientation.cpp
     unit/outline.cpp
     unit/paths.cpp
     unit/pixel_layout.cpp

@@ -5,6 +5,7 @@
 // files and headers hold. The round trips cover distributed units too; what is particular to them is in
 // conformance/distributed.cpp.
 
+#include <openxisf/color.h>
 #include <openxisf/error.h>
 #include <openxisf/image.h>
 #include <openxisf/io.h>
@@ -248,7 +249,7 @@ image_info rich_image()
                                       .x = {0.648431, 0.230154, 0.155886},
                                       .y = {0.330856, 0.701572, 0.066044},
                                       .name = "Adobe RGB (1998)"};
-    adobe.luminance = openxisf::detail::derive_luminance(adobe.x, adobe.y).value_or(adobe.luminance);
+    adobe.luminance = openxisf::luminance_coefficients(adobe.x, adobe.y).value_or(adobe.luminance);
     image.rgb_working_space = adobe;
     image.display_function = openxisf::display_function{.midtones = {0.000735, 0.000735, 0.000735, 0.5},
                                                         .shadows = {0.003758, 0.003758, 0.003758, 0.0},
@@ -1113,7 +1114,7 @@ TEST(conformance_writer, the_luminance_of_a_working_space_is_that_of_its_chromat
     model.add(image, std::vector<std::byte>(3));
     const openxisf::reader unit = open_strictly(written(model.writer(basic_options())));
     const openxisf::rgb_working_space& space = openxisf::test::value_of(unit.image(0).rgb_working_space);
-    EXPECT_EQ(space.luminance, openxisf::detail::derive_luminance(space.x, space.y));
+    EXPECT_EQ(space.luminance, openxisf::luminance_coefficients(space.x, space.y));
     EXPECT_FALSE(space.gamma.has_value());
 }
 

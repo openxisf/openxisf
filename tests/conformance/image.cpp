@@ -571,9 +571,12 @@ TEST(conformance_image, a_progress_function_that_returns_false_cancels_the_read)
             file.read_pixels(0, destination, {.progress = log.function()});
         })) << stop;
         EXPECT_EQ(log.calls.size(), stop);
-        // Nothing reached the destination before the data were complete.
-        EXPECT_EQ(destination, std::vector<std::byte>(2, std::byte{0xEE})) << stop;
     }
+    // A read cancelled before it starts leaves the destination as it was.
+    progress_log log{.stop = 1};
+    std::vector<std::byte> destination(2, std::byte{0xEE});
+    EXPECT_THROW(file.read_pixels(0, destination, {.progress = log.function()}), openxisf::cancelled_error);
+    EXPECT_EQ(destination, std::vector<std::byte>(2, std::byte{0xEE}));
 }
 
 TEST(conformance_image, the_exceptions_of_a_progress_function_pass_through)

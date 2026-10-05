@@ -9,6 +9,7 @@
 // that cannot, and each unit must open strictly, without a diagnostic, and hold the model. Any exception escapes and
 // fails the run.
 
+#include <openxisf/color.h>
 #include <openxisf/error.h>
 #include <openxisf/image.h>
 #include <openxisf/io.h>
@@ -292,7 +293,7 @@ template <typename Image> void describe(Image& image, choices& input, std::strin
                                                                              .name = "Adobe RGB (1998)"}
                                                : openxisf::rgb_working_space{};
         openxisf::rgb_working_space& space = *image.rgb_working_space;
-        space.luminance = detail::derive_luminance(space.x, space.y).value_or(space.luminance);
+        space.luminance = openxisf::luminance_coefficients(space.x, space.y).value_or(space.luminance);
     }
     if (input.flag()) {
         openxisf::display_function function{.name = input.printable(6)};
