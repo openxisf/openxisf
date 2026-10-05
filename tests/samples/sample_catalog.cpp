@@ -296,6 +296,56 @@ std::vector<std::string> d3_blocks()
     return paths;
 }
 
+constexpr std::string_view pixinsight_1_9_5 = "PixInsight 1.9.5-0 build 1706 (XISF module 1.1.3) on Windows 11";
+
+constexpr std::string_view group_d5_procedure =
+    "tests/data/pixinsight/make_group_d5.js, in automation mode. PixelMath creates a 400 x 300 Gray UInt16 image with "
+    "the expression (x() + y())/1398; the script sets on its main view the properties that ImageSolver 6.5.0 sets for "
+    "a solution: the first layer of a Gnomonic projection about M42 and its native coordinates, the projective "
+    "transformations (Math.homography() of the control points), the control points, the creation time, creator and "
+    "PixInsight's generation parameters; ImageWindow.regenerateAstrometricSolution() makes the core generate the "
+    "distortion models, and ImageWindow.saveAs() saves it with the format hint 'compression-codec zstd+sh'. The "
+    "control points are synthetic: random image points of a known model with a radial distortion and a wave, and "
+    "their celestial coordinates. PixInsight adds the WCS keywords TIMESYS, RA, OBJCTRA, DEC and OBJCTDEC, the "
+    "Observation:Center and reference system properties, its grids of the transformations "
+    "(PCL:AstrometricSolution:Grid), and the thumbnail of the global preferences. d5-reference.csv holds PixInsight's "
+    "coordinates for the solutions, evaluated on a copy of each on a 2 x 2 image, where its grids cover no point "
+    "evaluated.";
+
+// The image of a sample of group D5, its keywords, resolution, properties and thumbnail, then the metadata.
+std::vector<std::string> d5_elements(int properties)
+{
+    std::vector<std::string> paths{"/xisf/Image[1]", "/xisf/Image[1]/Data[1]"};
+    for (int i = 1; i <= 5; ++i) {
+        paths.push_back("/xisf/Image[1]/FITSKeyword[" + std::to_string(i) + "]");
+    }
+    paths.emplace_back("/xisf/Image[1]/Resolution[1]");
+    for (int i = 1; i <= properties; ++i) {
+        paths.push_back("/xisf/Image[1]/Property[" + std::to_string(i) + "]");
+    }
+    paths.emplace_back("/xisf/Image[1]/Thumbnail[1]");
+    paths.emplace_back("/xisf/Image[1]/Thumbnail[1]/Data[1]");
+    paths.emplace_back("/xisf/Metadata[1]");
+    for (int i = 1; i <= 7; ++i) {
+        paths.push_back("/xisf/Metadata[1]/Property[" + std::to_string(i) + "]");
+    }
+    return paths;
+}
+
+// The blocks of a sample of group D5: its pixels, the properties that are not among those written in the header, and
+// its thumbnail.
+std::vector<std::string> d5_blocks(int properties, std::initializer_list<int> in_header)
+{
+    std::vector<std::string> paths{"/xisf/Image[1]"};
+    for (int i = 1; i <= properties; ++i) {
+        if (std::ranges::find(in_header, i) == in_header.end()) {
+            paths.push_back("/xisf/Image[1]/Property[" + std::to_string(i) + "]");
+        }
+    }
+    paths.emplace_back("/xisf/Image[1]/Thumbnail[1]");
+    return paths;
+}
+
 const std::vector<sample>& catalog()
 {
     static const std::vector<sample> samples{
@@ -520,6 +570,46 @@ const std::vector<sample>& catalog()
          .set_by_hand = nothing_by_hand,
          .elements = d4_elements(),
          .blocks = {"/xisf/Image[1]", "/xisf/Image[2]", "/xisf/Image[3]"}},
+        {.id = "D5",
+         .file = "d5-astrometry.xisf",
+         .content = "A 400 x 300 Gray UInt16 image, embedded, with an astrometric solution as ImageSolver writes one "
+                    "with its default distortion correction: a Gnomonic projection, projective transformations, and "
+                    "distortion models of one Global term of thin plate splines of order 2 in each direction, whose Y "
+                    "components share the nodes of the X ones; 1000 control points.",
+         .producer = pixinsight_1_9_5,
+         .procedure = group_d5_procedure,
+         .set_by_hand = "The parameters of the model of the control points, and the generation parameters engine "
+                        "DDM, RBFType DDMThinPlateSpline, order 2, smoothness 0.005, 4000 spline points, simplifiers "
+                        "rejecting 10%.",
+         .elements = d5_elements(53),
+         .blocks = d5_blocks(53, {2,  5,  6,  7,  8,  9,  14, 15, 16, 17, 22, 23, 24, 26, 32,
+                                  33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 49}),
+         .application = "PixInsight 1.9.5"},
+        {.id = "D5L",
+         .file = "d5-astrometry-local.xisf",
+         .content = "The image of D5 with a solution of recursive surface splines of order 4 (VariableOrder): "
+                    "distortion models of 28 and 37 Local terms and a Fallback term, whose Y components share the "
+                    "nodes of the X ones; 800 control points.",
+         .producer = pixinsight_1_9_5,
+         .procedure = group_d5_procedure,
+         .set_by_hand = "As D5, with the engine Recursive, RBFType VariableOrder, order 4, and patches of at most 300 "
+                        "nodes, buckets of 64 points and 250 coarse points, a radius factor of 1.5.",
+         .elements = d5_elements(74),
+         .blocks = d5_blocks(74, {2,  6,  7,  8,  9,  10, 11, 23, 24, 25, 26, 27, 39, 40, 41, 43, 49, 50,
+                                  51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 70}),
+         .application = "PixInsight 1.9.5"},
+        {.id = "D5M",
+         .file = "d5-astrometry-multiquadric.xisf",
+         .content = "The image of D5 with a solution of multiquadric splines of order 2: one Global term in each "
+                    "direction with shape parameters, whose Y component has nodes, a normalization and a shape "
+                    "parameter of its own in the projection-to-image direction; 1000 control points.",
+         .producer = pixinsight_1_9_5,
+         .procedure = group_d5_procedure,
+         .set_by_hand = "As D5, with the engine DDM and RBFType DDMMultiquadric.",
+         .elements = d5_elements(59),
+         .blocks = d5_blocks(59, {2,  5,  6,  7,  8,  9,  13, 15, 16, 17, 18, 19, 23, 27, 28, 29, 30,
+                                  32, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 55}),
+         .application = "PixInsight 1.9.5"},
     };
     return samples;
 }

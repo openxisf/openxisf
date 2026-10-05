@@ -12,6 +12,7 @@
 #include "model/property_text.h"
 #include "model/property_types.h"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <optional>
@@ -26,11 +27,12 @@ namespace {
 // The metadata properties that every unit must have (spec §11.4.1).
 constexpr std::array<std::string_view, 2> mandatory_metadata{"XISF:CreationTime", "XISF:CreatorApplication"};
 
-// The properties of one object, as they are associated with it, each identifier once.
+// The properties of one object, as they are associated with it, each identifier once, and the Property element of each.
 struct property_set
 {
     std::vector<property> items{};
     std::unordered_set<std::string> ids{};
+    std::vector<std::size_t> elements{};
 };
 
 class property_reader
@@ -46,6 +48,7 @@ public:
     {
         read_elements();
         count_uses();
+        solution_checked_.assign(properties_.size(), false);
         unit_properties result;
         result.metadata = metadata();
         result.standalone = collect(no_element);
@@ -155,6 +158,7 @@ private:
             return;
         }
         set.ids.insert(found->id);
+        set.elements.push_back(target);
         if (last_use) {
             set.items.push_back(std::move(*found));
         } else {
@@ -178,6 +182,7 @@ private:
                 add(set, *target, index, name);
             }
         });
+        check_solution_types(set);
         return property_list(std::move(set.items));
     }
 
@@ -211,6 +216,7 @@ private:
                 }
             }
         }
+        check_solution_types(set);
         return property_list(std::move(set.items));
     }
 
@@ -277,21 +283,43 @@ private:
             return std::nullopt;
         }
         property result{.id = id.value(), .value = std::move(*value), .comment = node.attribute("comment").value()};
-        check_reserved_type(element, result.id);
+        // Those of an astrometric solution depend on its revision, which check_solution_types() knows.
+        if (!is_astrometric_solution_id(result.id)) {
+            check_reserved_type(element.type, path, result.id);
+        }
         result.format = read_format(element);
         return result;
     }
 
     // The reserved identifiers have the types of the specification (spec §11.4, §11.5.3). Another type is tolerated:
     // PixInsight writes XISF:CreationTime as a String.
-    void check_reserved_type(const value_element& element, const std::string& id)
+    void check_reserved_type(property_type type, const std::string& path, const std::string& id)
     {
         const std::optional<property_type> reserved = reserved_property_type(id);
-        if (reserved && *reserved != element.type) {
+        if (reserved && *reserved != type) {
             log_.warning(errc::reserved_property_type,
                          "the property " + quote(id) + " is a " + std::string(property_type_name(*reserved)) +
-                             " property, but has the type " + std::string(property_type_name(element.type)),
-                         {.element = element.path, .attribute = "type"});
+                             " property, but has the type " + std::string(property_type_name(type)),
+                         {.element = path, .attribute = "type"});
+        }
+    }
+
+    // The properties of the AstrometricSolution namespace have the types of revision 1.x of spec §11.5.3.7, so they are
+    // checked for each object, unless the solution of the object is of another revision (spec §11.5.3.7.6). A Property
+    // element that several objects have is checked once.
+    void check_solution_types(const property_set& set)
+    {
+        const auto version = std::ranges::find(set.items, "AstrometricSolution:Version", &property::id);
+        if (version != set.items.end() && is_foreign_astrometric_version(version->value)) {
+            return;
+        }
+        for (std::size_t i = 0; i < set.items.size(); ++i) {
+            const std::size_t slot = slots_[set.elements[i]];
+            if (!is_astrometric_solution_id(set.items[i].id) || solution_checked_[slot]) {
+                continue;
+            }
+            solution_checked_[slot] = true;
+            check_reserved_type(set.items[i].value.type(), outline_.path(set.elements[i]), set.items[i].id);
         }
     }
 
@@ -328,6 +356,8 @@ private:
     std::vector<std::optional<property>> properties_{};
     // How many associations each property has left.
     std::vector<std::size_t> uses_{};
+    // Whether the type of each property of an astrometric solution has been checked.
+    std::vector<bool> solution_checked_{};
 };
 
 } // namespace

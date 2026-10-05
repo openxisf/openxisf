@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // Lists what a unit holds: how it is stored, its metadata, its standalone properties and tables, its images with their
-// attributes, properties, tables, FITS keywords and the elements that describe them, and the problems the reader found
-// in it. The path is UTF-8 on every platform; on Windows the program
+// attributes, properties, tables, FITS keywords, the elements that describe them and their astrometric solutions, and
+// the problems the reader found in it. The path is UTF-8 on every platform; on Windows the program
 // takes its arguments from the wide command line (arguments.h), so that a file name of any characters reaches the
 // library intact. With --header-only, the reader reads the header alone: the ICC profiles, the pixels of thumbnails and
 // the values in data blocks are not loaded.
@@ -124,6 +124,35 @@ void list_description(const openxisf::image_info& info)
     }
 }
 
+// The astrometric solution of an image (spec §11.5.3.7), when it has one: its projection, the highest layer that can be
+// evaluated, and the celestial coordinates of the centre of the image.
+void list_solution(const openxisf::image_info& info)
+{
+    const openxisf::astrometric_solution solution(info.properties);
+    const std::optional<openxisf::astrometric_layer> layer = solution.layer();
+    const std::optional<openxisf::astrometric_projection>& projection = solution.projection();
+    if (!layer || !projection) {
+        if (solution.status(openxisf::astrometric_layer::linear) != openxisf::astrometric_status::absent) {
+            std::cout << "  astrometric solution that cannot be used: "
+                      << solution.problem(openxisf::astrometric_layer::linear) << '\n';
+        }
+        return;
+    }
+    constexpr std::array<std::string_view, 3> layers{"linear", "projective", "distortion model"};
+    std::cout << "  astrometric solution " << solution.version() << " ("
+              << openxisf::projection_system_name(projection->projection_system) << ", "
+              << layers[static_cast<std::size_t>(*layer) - 1] << " layer)";
+    // The centre of a two-dimensional image is at half its width and height (spec §11.5.3.7.1).
+    const std::vector<std::uint64_t>& size = info.geometry.dimensions;
+    const openxisf::image_point centre{.x = static_cast<double>(size[0]) / 2.0,
+                                       .y = size.size() > 1 ? static_cast<double>(size[1]) / 2.0 : 0.5};
+    if (const std::optional<openxisf::celestial_point> sky = solution.image_to_celestial(centre)) {
+        std::cout << ", centre at RA " << number(sky->ra) << ", Dec " << number(sky->dec) << " ("
+                  << projection->celestial_reference_system << ")";
+    }
+    std::cout << '\n';
+}
+
 void list_image(const openxisf::image_info& info)
 {
     std::cout << "  ";
@@ -153,6 +182,7 @@ void list_image(const openxisf::image_info& info)
     list_properties(info.properties, "  ");
     list_tables(info.tables, "  ");
     list_description(info);
+    list_solution(info);
 }
 
 std::string_view severity_name(openxisf::severity level)

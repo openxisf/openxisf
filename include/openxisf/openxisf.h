@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <openxisf/astrometry.h>
 #include <openxisf/color.h>
 #include <openxisf/display.h>
 #include <openxisf/error.h>

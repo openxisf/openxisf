@@ -5,8 +5,12 @@
 
 #include "model/property_catalog.h"
 
+#include <openxisf/property.h>
+
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -86,6 +90,46 @@ TEST(property_catalog, other_identifiers_are_not_reserved)
           "Instrument:ExposureTime "}) {
         EXPECT_FALSE(reserved_property_type(id).has_value()) << id;
     }
+}
+
+TEST(property_catalog, the_versions_of_astrometric_solutions)
+{
+    using openxisf::detail::parse_astrometric_version;
+    using revision = std::array<std::uint32_t, 2>;
+    // Spec §11.5.3.7.2: major.minor, of plain decimal unsigned integers.
+    EXPECT_EQ(parse_astrometric_version("1.0"), (revision{1, 0}));
+    EXPECT_EQ(parse_astrometric_version("1.12"), (revision{1, 12}));
+    EXPECT_EQ(parse_astrometric_version("2.0"), (revision{2, 0}));
+    EXPECT_EQ(parse_astrometric_version("01.00"), (revision{1, 0}));
+    EXPECT_EQ(parse_astrometric_version("4294967295.4294967295"), (revision{4294967295U, 4294967295U}));
+    for (const std::string_view text : {"", "1", "1.", ".0", "1.0.0", "+1.0", "-1.0", " 1.0", "1.0 ", "1.x", "0x1.0",
+                                        "1,0", "4294967296.0", "1.4294967296"}) {
+        EXPECT_FALSE(parse_astrometric_version(text).has_value()) << text;
+    }
+}
+
+TEST(property_catalog, a_solution_of_another_revision_has_types_of_its_own)
+{
+    using openxisf::property_list;
+    using openxisf::detail::has_foreign_astrometric_solution;
+    property_list properties;
+    EXPECT_FALSE(has_foreign_astrometric_solution(properties));
+    properties.set("AstrometricSolution:Version", "1.0");
+    EXPECT_FALSE(has_foreign_astrometric_solution(properties));
+    properties.set("AstrometricSolution:Version", "1.7");
+    EXPECT_FALSE(has_foreign_astrometric_solution(properties));
+    properties.set("AstrometricSolution:Version", "2.0");
+    EXPECT_TRUE(has_foreign_astrometric_solution(properties));
+    properties.set("AstrometricSolution:Version", "one");
+    EXPECT_TRUE(has_foreign_astrometric_solution(properties));
+    // A version that is not a String is one of revision 1 of another type.
+    properties.set("AstrometricSolution:Version", 2.0);
+    EXPECT_FALSE(has_foreign_astrometric_solution(properties));
+
+    EXPECT_TRUE(openxisf::detail::is_astrometric_solution_id("AstrometricSolution:Version"));
+    EXPECT_TRUE(openxisf::detail::is_astrometric_solution_id("AstrometricSolution:Future"));
+    EXPECT_FALSE(openxisf::detail::is_astrometric_solution_id("PCL:AstrometricSolution:Grid:Fingerprint"));
+    EXPECT_FALSE(openxisf::detail::is_astrometric_solution_id("AstrometricSolutions:Version"));
 }
 
 TEST(property_catalog, the_metadata_namespace)

@@ -5,9 +5,9 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: 0.4.0, an early release.** It reads and writes monolithic and distributed units, and implements the
-algorithms that the specification defines; astrometric solutions and signed units come in later releases, and the API may
-change before 1.0. `openxisf::reader` checks the header of a
+**Status: 0.5.0, an early release.** It reads and writes monolithic and distributed units, implements the algorithms
+that the specification defines, and evaluates astrometric solutions; signed units come in a later release, and the API
+may change before 1.0. `openxisf::reader` checks the header of a
 unit (the file structure, the XML, the root element, the elements of the specification and the references between
 them) and its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with
 SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its
@@ -28,6 +28,12 @@ RGB, CIE XYZ and CIE L*a*b*, relative to the RGB working space of an image, with
 L*a*b* before writing and back to RGB after reading; display functions, and the adaptive algorithm that computes one from
 the statistics of an image; the orientation of an image, applied for showing it only; and property values written as
 text with their format specifiers.
+Astrometric solutions, the properties of the `AstrometricSolution` namespace of an image, are read with each of their
+layers checked: the projection, with the seven projection systems of the specification and its linear transformation,
+the projective transformations, and the distortion models of radial basis function splines, Global, Local and Fallback
+terms. A solution converts image coordinates to celestial coordinates and back through its highest available layer, in
+double precision and with the inverse that each layer stores. The writer keeps the properties of a solution as they
+are given.
 The repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
 input and output layer, and the internal building blocks: the text forms of numbers and Boolean values, Base64 and
 hexadecimal data, UUIDs and time stamps.
@@ -46,7 +52,7 @@ hexadecimal data, UUIDs and time stamps.
 | Images: every sample format, planar and normal storage, both byte orders | Yes | Yes, in little-endian byte order |
 | Ancillary elements: FITS keywords, ICC profile, RGB working space, display function, color filter array, resolution, thumbnail | Yes | Yes |
 | Colour transformations (Annex B), display functions and their adaptive algorithm, orientation, property format rendering | Yes | Yes |
-| Astrometric solutions | Planned | Planned |
+| Astrometric solutions: every projection system and layer, evaluated in both directions | Yes | Kept as given |
 | Signed units (the signature is returned, not verified) | Planned | Not applicable |
 
 The table is updated at each release.
@@ -178,6 +184,37 @@ const openxisf::display_function function =
 Each sample `x` of channel `channel` is then shown as `openxisf::apply_display_function(function, channel, x)`.
 `read_info` writes property values with `openxisf::format_value()`, as the format specifier of each property asks.
 
+An image may have an astrometric solution. `openxisf::astrometric_solution` reads it from the properties of the image,
+says which of its layers are available and why the others are not, and converts between image and celestial
+coordinates, in both directions, through the highest available layer. This excerpt of `samples/read_info.cpp` gives the
+right ascension and declination of the centre of an image:
+
+```cpp
+const openxisf::astrometric_solution solution(info.properties);
+const std::optional<openxisf::astrometric_layer> layer = solution.layer();
+const std::optional<openxisf::astrometric_projection>& projection = solution.projection();
+if (!layer || !projection) {
+    if (solution.status(openxisf::astrometric_layer::linear) != openxisf::astrometric_status::absent) {
+        std::cout << "  astrometric solution that cannot be used: "
+                  << solution.problem(openxisf::astrometric_layer::linear) << '\n';
+    }
+    return;
+}
+```
+
+```cpp
+const openxisf::image_point centre{.x = static_cast<double>(size[0]) / 2.0,
+                                   .y = size.size() > 1 ? static_cast<double>(size[1]) / 2.0 : 0.5};
+if (const std::optional<openxisf::celestial_point> sky = solution.image_to_celestial(centre)) {
+    std::cout << ", centre at RA " << number(sky->ra) << ", Dec " << number(sky->dec) << " ("
+              << projection->celestial_reference_system << ")";
+}
+```
+
+A solution describes the image it was computed for, and the writer keeps its properties as they are. An application
+that crops, resamples or otherwise changes the geometry of an image removes them with
+`openxisf::remove_astrometric_solution()`, as the specification requires.
+
 A unit is written with `openxisf::writer`, from the same model that the reader returns, so that a unit read can be
 written again. This excerpt of `samples/write_image.cpp` writes an image with properties, FITS keywords and a
 thumbnail, compressed with Zstandard and byte shuffling, with SHA-256 checksums; without these options the writer
@@ -272,7 +309,8 @@ These are the design rules. They take effect as the API arrives.
 
 - **Thread safety.** There is no mutable global state. The const member functions of a `reader` can be called from any
   number of threads at once, also to read pixels; `load_ancillary_data()`, the only one that changes it, needs exclusive
-  access. Writers and values are thread-compatible, like standard containers. The file
+  access. An `astrometric_solution` is immutable, and any number of threads can use it at once. Writers and values are
+  thread-compatible, like standard containers. The file
   and memory sources can be read from any number of threads at once; the library calls a source that does not declare
   concurrent reads from one thread at a time. Built with oneTBB, the library also works in parallel within one call, in
   the task arena of the calling thread and without changing the global settings of oneTBB; sources, sinks and progress
