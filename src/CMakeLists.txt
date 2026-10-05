@@ -8,6 +8,9 @@ configure_file(
 
 # The internal code, in namespace openxisf::detail.
 set(internal_sources
+    algorithms/astrometric_model.cpp
+    algorithms/celestial_sphere.cpp
+    algorithms/distortion_model.cpp
     algorithms/pixel_values.cpp
     codec/compressed_block.cpp
     codec/compression.cpp
@@ -73,6 +76,7 @@ endif()
 # The public API.
 set(public_sources
     error.cpp
+    algorithms/astrometry.cpp
     algorithms/color.cpp
     algorithms/display.cpp
     algorithms/format.cpp

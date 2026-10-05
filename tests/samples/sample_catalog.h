@@ -31,6 +31,8 @@ struct sample
     std::vector<std::string> elements{};
     /// The paths of the elements that serialize a data block, in document order.
     std::vector<std::string> blocks{};
+    /// The value of XISF:CreatorApplication.
+    std::string_view application = "PixInsight 1.9.4";
 };
 
 /// Every sample.

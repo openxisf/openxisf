@@ -471,6 +471,36 @@ TEST(conformance_property_element, a_reserved_identifier_with_another_type_is_to
     EXPECT_EQ(opened.properties.standalone.at("Instrument:ExposureTime").value, property_value(300.0));
 }
 
+TEST(conformance_property_element, an_astrometric_solution_of_another_revision_has_types_of_its_own)
+{
+    // Spec §11.5.3.7.6: a major revision of the namespace may change anything; the types of spec §11.5.3.7 are those of
+    // revision 1.
+    const std::string reference =
+        R"(<Property id="AstrometricSolution:ReferenceCelestialCoordinates" type="String">83.8 -5.4</Property>)";
+    const auto version = [](std::string_view text) {
+        return R"(<Property id="AstrometricSolution:Version" type="String">)" + std::string(text) + "</Property>";
+    };
+    const unit foreign = open_body(openxisf::test::image_xml({}, version("2.0") + reference));
+    EXPECT_TRUE(no_diagnostics(foreign.diagnostics));
+    const unit current = open_body(openxisf::test::image_xml({}, version("1.0") + reference));
+    EXPECT_TRUE(single_diagnostic(current.diagnostics, severity::warning, errc::reserved_property_type,
+                                  "/xisf/Image[1]/Property[2]"));
+    // A Property element that two images name is checked once, and a solution without a version is of revision 1.
+    const unit shared = open_body(openxisf::test::image_xml({}, R"(<Reference ref="center"/>)") +
+                                  openxisf::test::image_xml({}, R"(<Reference ref="center"/>)") +
+                                  R"(<Property uid="center" id="AstrometricSolution:ReferenceImageCoordinates" )"
+                                  R"(type="Float64" value="1"/>)");
+    EXPECT_TRUE(
+        single_diagnostic(shared.diagnostics, severity::warning, errc::reserved_property_type, "/xisf/Property[1]"));
+    // A property of the namespace in the Metadata element, where it does not belong, has its type checked too.
+    const unit misplaced = open_internal(
+        monolithic_file(header_xml({}, R"(<Property id="AstrometricSolution:Version" type="Float64" value="1"/>)")));
+    ASSERT_EQ(misplaced.diagnostics.size(), 2U);
+    EXPECT_EQ(misplaced.diagnostics[0].code, errc::invalid_metadata);
+    EXPECT_EQ(misplaced.diagnostics[1].code, errc::reserved_property_type);
+    EXPECT_EQ(misplaced.diagnostics[1].context.element, "/xisf/Metadata[1]/Property[3]");
+}
+
 // -------------------------------------------------------------------------------------------------------------------
 // Placement (spec §11.1)
 
