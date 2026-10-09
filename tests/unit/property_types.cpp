@@ -19,6 +19,7 @@ using openxisf::detail::alternate_type_name;
 using openxisf::detail::byte_order_item_size;
 using openxisf::detail::category_of;
 using openxisf::detail::element_type;
+using openxisf::detail::is_property_type;
 using openxisf::detail::property_type_named;
 using openxisf::detail::type_category;
 using openxisf::detail::value_size;
@@ -103,6 +104,19 @@ TEST(property_types, other_names_are_no_types)
          {"", "float32", "FLOAT32", "Float32 ", " Float32", "Table", "Float16", "Int256", "Bool", "Uint8", "Complex16",
           "Vector64", "F64vector", "Ui8Vector", "Time", "Timepoint", "string"}) {
         EXPECT_FALSE(property_type_named(name).has_value()) << name;
+    }
+}
+
+TEST(property_types, a_value_outside_the_enumeration_is_no_type_and_has_no_name)
+{
+    // A cast gives such a value, as in the type of a table field that an application fills.
+    EXPECT_TRUE(is_property_type(property_type::boolean));
+    EXPECT_TRUE(is_property_type(property_type::c128_matrix));
+    for (const int value : {51, 99, 255}) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): the value is outside on purpose
+        const auto type = static_cast<property_type>(value);
+        EXPECT_FALSE(is_property_type(type)) << value;
+        EXPECT_EQ(property_type_name(type), "") << value;
     }
 }
 

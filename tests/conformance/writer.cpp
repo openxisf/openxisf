@@ -2,8 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The writer (spec §9.2, §9.5, §10, §11): units written with every option read back as their model, and what their
-// files and headers hold. The round trips cover distributed units too; what is particular to them is in
-// conformance/distributed.cpp.
+// files and headers hold. The model has a property of every type (§8.1, §8.4.4) with the special values of the text
+// forms (§8.3) and format specifiers (§8.4.3), tables (§8.4.4.7), and images of several dimensions, sample formats,
+// colour spaces, storage models and ranges (§8.5.1 to §8.5.5, §11.5.1) with every ancillary element (§11.6 to
+// §11.12). The files have little-endian structural integers (§8.2) and the layout of §9.1 and §9.2, with attached
+// and inline blocks (§10.1), checksums (§10.5), and each codec (§10.6.3 to §10.6.10), with byte shuffling (§10.6.2)
+// and subblocks. The properties of an astrometric solution are kept as they are (§11.5.3.7). The round trips cover
+// distributed units too; what is particular to them is in conformance/distributed.cpp.
 
 #include <openxisf/color.h>
 #include <openxisf/error.h>
@@ -276,6 +281,20 @@ image_info simple_image(openxisf::sample_format format, std::vector<std::uint64_
     return image;
 }
 
+// The pixel data of the rich image: Float32 samples that repeat every 61 samples, in native byte order, so that the
+// bytes written, little-endian on every host, are the same everywhere and compress the same, in subblocks of 1000
+// bytes too. A pattern of bytes is swapped on a big-endian host, where its period grows fourfold, beyond such a
+// subblock, and LZ4 and Zstandard then make no subblock smaller.
+std::vector<std::byte> rich_pixels(const image_info& image)
+{
+    std::vector<float> samples(image.geometry.sample_count());
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        samples[i] = static_cast<float>(i % 61) / 61.0F;
+    }
+    const std::span<const std::byte> bytes = std::as_bytes(std::span<const float>(samples));
+    return {bytes.begin(), bytes.end()};
+}
+
 unit_model rich_model()
 {
     unit_model model;
@@ -291,7 +310,7 @@ unit_model rich_model()
     model.tables.push_back(messier_table());
 
     image_info rich = rich_image();
-    model.add(rich, openxisf::test::pattern(rich.data_size()));
+    model.add(rich, rich_pixels(rich));
 
     image_info mosaic = simple_image(openxisf::sample_format::uint16, {64, 48}, 1);
     mosaic.id = "mosaic";
@@ -588,6 +607,52 @@ INSTANTIATE_TEST_SUITE_P(options, conformance_writer_round_trip, testing::Values
                              return case_name(parameter.param);
                          });
 
+TEST(conformance_writer, the_tables_and_properties_of_a_unit_read_are_written_again_as_they_were_read)
+{
+    // What the reader returns of tables with a structure of their own or a standalone one, of cells and properties in
+    // data blocks, and of standalone properties is a model that the writer writes again as it is (spec §11.1 to
+    // §11.3). The samples of PixInsight have no Table, Structure or standalone Property element.
+    const std::string_view star = R"(<Cell location="inline:base64">UiBDckI=</Cell>)";
+    const std::string body =
+        R"(<Structure uid="observations"><Field id="star" type="String" header="Star"/>)"
+        R"(<Field id="count" type="UInt32"/><Field id="data" type="ByteArray"/>)"
+        R"(<Field id="magnitude" type="Float32" format="float:fixed;precision:2"/></Structure>)"
+        R"(<Property id="Test:Count" type="UInt32" value="7"/>)"
+        R"(<Property id="Test:Bytes" type="ByteArray" length="5" location="attachment:{0}"/>)"
+        R"(<Property id="Test:Note" type="String" location="inline:base64">YSBub3Rl</Property>)"
+        R"(<Table id="Stars" caption="Observed stars"><Reference ref="observations"/>)"
+        R"(<Row><Cell>SS Cyg</Cell><Cell value="132729"/><Cell length="4" location="attachment:{1}"/>)"
+        R"(<Cell value="8.25"/></Row><Row>)" +
+        std::string(star) +
+        R"(<Cell value="58135"/><Cell length="3" location="attachment:{2}"/><Cell value="5.75"/></Row></Table>)"
+        R"(<Table id="Settings"><Structure><Field id="name" type="String"/><Field id="value" type="Float64"/>)"
+        R"(</Structure><Row><Cell>gain</Cell><Cell value="1.5"/></Row></Table>)" +
+        openxisf::test::image_xml({}, R"(<Table id="Frames"><Reference ref="observations"/><Row>)" + std::string(star) +
+                                          R"(<Cell value="3"/><Cell length="2" location="inline:hex">0102</Cell>)"
+                                          R"(<Cell value="6"/></Row></Table>)"
+                                          R"(<Property id="Test:Frame" type="String" location="attachment:{3}"/>)");
+    const openxisf::reader original = openxisf::test::open_unit(
+        openxisf::test::file_with_attachments(openxisf::test::header_xml(body),
+                                              {openxisf::test::bytes("12345"), openxisf::test::bytes("abcd"),
+                                               openxisf::test::bytes("xyz"), openxisf::test::bytes("first frame")}),
+        {.strict = true});
+    ASSERT_EQ(original.properties().size(), 3U);
+    ASSERT_EQ(original.tables().size(), 2U);
+    ASSERT_EQ(original.images().size(), 1U);
+    ASSERT_EQ(original.image(0).tables.size(), 1U);
+
+    openxisf::writer output(basic_options());
+    output.properties() = original.properties();
+    output.tables().assign(original.tables().begin(), original.tables().end());
+    const std::vector<std::byte> pixels = original.read_pixels(0);
+    (void)output.add_image(original.image(0), pixels);
+    const openxisf::reader unit = open_strictly(written(output));
+    EXPECT_EQ(unit.properties(), original.properties());
+    EXPECT_TRUE(std::ranges::equal(unit.tables(), original.tables()));
+    ASSERT_EQ(unit.images().size(), 1U);
+    EXPECT_EQ(unit.image(0), original.image(0));
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The file and its header
 
@@ -725,7 +790,9 @@ TEST(conformance_writer, by_default_nothing_is_compressed_checksummed_divided_or
         EXPECT_EQ(header.find(attribute), std::string::npos) << attribute;
     }
     // Only the image that has one keeps its UUID.
-    EXPECT_EQ(header.find(" uuid="), header.rfind(" uuid="));
+    const std::size_t uuid = header.find(" uuid=");
+    EXPECT_NE(uuid, std::string::npos);
+    EXPECT_EQ(uuid, header.rfind(" uuid="));
     for (const std::string_view id : {"XISF:ChecksumAlgorithms", "XISF:CompressionCodecs", "XISF:CompressionLevel"}) {
         EXPECT_EQ(header.find(id), std::string::npos) << id;
     }
@@ -1140,6 +1207,26 @@ TEST(conformance_writer, strings_that_xml_cannot_hold_go_in_data_blocks)
     EXPECT_EQ(checked, 4U);
 }
 
+TEST(conformance_writer, strings_longer_than_1_mib_go_in_data_blocks)
+{
+    // A reader limits the size of a header, and reads a data block within its limit of loaded data instead.
+    unit_model model;
+    const std::string at_the_limit(std::size_t{1} << 20, 'a');
+    const std::string beyond(at_the_limit + "b");
+    model.properties.set("Test:AtTheLimit", at_the_limit);
+    model.properties.set("Test:Beyond", beyond);
+    const std::vector<std::byte> file = written(model.writer(basic_options()));
+    const auto header = parsed_header(file);
+    const pugi::xml_node first = openxisf::test::element_at(*header, "Property");
+    EXPECT_EQ(std::string_view(first.attribute("id").value()), "Test:AtTheLimit");
+    EXPECT_TRUE(first.attribute("location").empty());
+    const pugi::xml_node second = first.next_sibling("Property");
+    EXPECT_EQ(std::string_view(second.attribute("id").value()), "Test:Beyond");
+    EXPECT_TRUE(std::string_view(second.attribute("location").value()).starts_with("attachment:"));
+    const openxisf::reader unit = open_strictly(file);
+    EXPECT_EQ(unit.properties(), model.properties);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The API
 
@@ -1162,6 +1249,9 @@ TEST(conformance_writer, images_need_pixel_data_of_their_size_and_type)
 
 TEST(conformance_writer, the_compression_level_is_from_0_to_100)
 {
+    write_options highest = basic_options();
+    highest.compression_level = 100;
+    EXPECT_NO_THROW(openxisf::writer output(highest));
     for (const int level : {-1, 101}) {
         write_options options = basic_options();
         options.compression_level = level;
@@ -1276,6 +1366,27 @@ TEST(conformance_writer, a_save_cancelled_before_it_starts_writes_nothing)
     openxisf::memory_sink sink;
     EXPECT_THROW(rich_model().writer(options).save(sink), openxisf::cancelled_error);
     EXPECT_EQ(sink.position(), 0U);
+}
+
+TEST(conformance_writer, a_sink_that_already_holds_bytes_is_refused)
+{
+    // Every position in a unit counts from its first byte (spec §9.2), so a second unit after the first would have its
+    // blocks misplaced, with a codec or without.
+    write_options compressed = basic_options();
+    compressed.codec = openxisf::codec::zstd;
+    const unit_model model = rich_model();
+    for (const write_options& options : {basic_options(), compressed}) {
+        const openxisf::writer output = model.writer(options);
+        openxisf::memory_sink memory;
+        openxisf::callback_sink append_only([](std::span<const std::byte> /*data*/) {});
+        for (openxisf::output_sink* sink : std::array<openxisf::output_sink*, 2>{&memory, &append_only}) {
+            output.save(*sink);
+            const std::uint64_t first = sink->position();
+            EXPECT_TRUE(
+                openxisf::test::throws<openxisf::usage_error>(errc::invalid_argument, [&] { output.save(*sink); }));
+            EXPECT_EQ(sink->position(), first);
+        }
+    }
 }
 
 TEST(conformance_writer, failures_of_the_sink_pass_through)

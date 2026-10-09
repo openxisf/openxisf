@@ -13,7 +13,9 @@
 #include "codec/compression.h"
 #include "core/xoshiro.h"
 #include "support/bytes.h"
+#include "support/cursor_source.h"
 #include "support/fixture_builder.h"
+#include "support/threads.h"
 
 #include <gtest/gtest.h>
 
@@ -26,7 +28,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -34,8 +35,9 @@ namespace {
 
 using openxisf::pixel_storage;
 using openxisf::reader;
+using openxisf::test::cursor_source;
 
-constexpr int thread_count = 16;
+constexpr std::size_t thread_count = 16;
 constexpr int reads_per_thread = 40;
 constexpr std::size_t width = 64;
 constexpr std::size_t height = 48;
@@ -97,47 +99,37 @@ std::vector<std::byte> unit_of_three_images()
                                                  image_blocks());
 }
 
-// A source over shared bytes that does not declare concurrent reads, and reads them unsynchronized.
-std::unique_ptr<openxisf::input_source> serialized_source(std::shared_ptr<const std::vector<std::byte>> data)
-{
-    const std::uint64_t size = data->size();
-    return std::make_unique<openxisf::callback_source>(
-        size, [data = std::move(data)](std::uint64_t offset, std::span<std::byte> destination) {
-            std::memcpy(destination.data(), data->data() + offset, destination.size());
-        });
-}
-
-// Every thread reads images at random in both storage models and compares them with the expected bytes. Returns the
-// number of wrong reads, failed reads included.
+// Every thread reads images at random in both storage models, into a vector or into memory of its own, and compares
+// them with the expected bytes. Returns the number of wrong reads, failed reads included.
 int read_from_threads(const reader& file)
 {
     const std::vector<std::byte> planar = samples(pixel_storage::planar);
     const std::vector<std::byte> normal = samples(pixel_storage::normal);
     const std::vector<std::byte> small{std::byte{1}, std::byte{2}};
     std::atomic<int> wrong{0};
-    std::vector<std::thread> threads;
-    threads.reserve(thread_count);
-    for (int t = 0; t < thread_count; ++t) {
-        threads.emplace_back([&, t] {
-            openxisf::detail::xoshiro256starstar random({4, 5, 6, static_cast<std::uint64_t>(t) + 1});
-            for (int i = 0; i < reads_per_thread; ++i) {
-                const std::size_t index = random() % 3;
-                const pixel_storage storage = random() % 2 == 0 ? pixel_storage::planar : pixel_storage::normal;
-                const std::vector<std::byte>& expected =
-                    index == 2 ? small : (storage == pixel_storage::planar ? planar : normal);
-                try {
-                    if (file.read_pixels(index, {.storage = storage}) != expected) {
-                        ++wrong;
-                    }
-                } catch (const std::exception&) {
+    openxisf::test::run_threads(thread_count, [&](std::size_t t) {
+        openxisf::detail::xoshiro256starstar random({4, 5, 6, t + 1});
+        std::vector<std::byte> destination;
+        for (int i = 0; i < reads_per_thread; ++i) {
+            const std::size_t index = random() % 3;
+            const pixel_storage storage = random() % 2 == 0 ? pixel_storage::planar : pixel_storage::normal;
+            const std::vector<std::byte>& expected =
+                index == 2 ? small : (storage == pixel_storage::planar ? planar : normal);
+            try {
+                if (random() % 2 == 0) {
+                    destination = file.read_pixels(index, {.storage = storage});
+                } else {
+                    destination.assign(expected.size(), std::byte{0xEE});
+                    file.read_pixels(index, destination, {.storage = storage});
+                }
+                if (destination != expected) {
                     ++wrong;
                 }
+            } catch (const std::exception&) {
+                ++wrong;
             }
-        });
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
+        }
+    });
     return wrong.load();
 }
 
@@ -150,9 +142,13 @@ TEST(concurrency_pixels, threads_read_the_pixels_of_one_reader_at_once)
 
 TEST(concurrency_pixels, a_source_without_concurrent_reads_is_read_one_thread_at_a_time)
 {
-    const reader file(serialized_source(std::make_shared<const std::vector<std::byte>>(unit_of_three_images())));
+    const std::vector<std::byte> unit = unit_of_three_images();
+    auto source = std::make_unique<cursor_source>(unit);
+    const cursor_source& cursor = *source;
+    const reader file(std::move(source));
     ASSERT_EQ(file.images().size(), 3U);
     EXPECT_EQ(read_from_threads(file), 0);
+    EXPECT_FALSE(cursor.overlapped());
 }
 
 TEST(concurrency_pixels, threads_read_the_external_blocks_of_one_reader_at_once)
@@ -160,19 +156,26 @@ TEST(concurrency_pixels, threads_read_the_external_blocks_of_one_reader_at_once)
     // A distributed unit, whose data blocks file the library reads one thread at a time.
     const std::vector<std::vector<std::byte>> data = image_blocks();
     const std::uint64_t second = 112 + data[0].size();
-    const auto blocks = std::make_shared<const std::vector<std::byte>>(openxisf::test::blocks_file(
+    const std::vector<std::byte> blocks = openxisf::test::blocks_file(
         {{.elements =
               {{.id = 0x1111, .position = 112, .length = data[0].size()},
                {.id = 0x2222, .position = second, .length = data[1].size(), .uncompressed_length = data[0].size()}}}},
-        {{.position = 112, .data = data[0]}, {.position = second, .data = data[1]}}));
+        {{.position = 112, .data = data[0]}, {.position = second, .data = data[1]}});
     const std::string header =
         header_of_three_images("path(@header_dir/unit.xisb):0x1111", "path(@header_dir/unit.xisb):0x2222");
-    const reader file(
-        std::make_unique<openxisf::memory_source>(openxisf::test::bytes(header)),
-        {.resolver = [blocks](const openxisf::external_reference&) { return serialized_source(blocks); }});
+    // The reader keeps the source that the resolver returns as long as it exists.
+    const cursor_source* cursor = nullptr;
+    const reader file(std::make_unique<openxisf::memory_source>(openxisf::test::bytes(header)),
+                      {.resolver = [&blocks, &cursor](const openxisf::external_reference&) {
+                          auto source = std::make_unique<cursor_source>(blocks);
+                          cursor = source.get();
+                          return source;
+                      }});
     ASSERT_EQ(file.images().size(), 3U);
     ASSERT_TRUE(file.diagnostics().empty());
+    ASSERT_NE(cursor, nullptr);
     EXPECT_EQ(read_from_threads(file), 0);
+    EXPECT_FALSE(cursor->overlapped());
 }
 
 } // namespace

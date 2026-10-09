@@ -21,7 +21,8 @@ using color_components = std::array<double, 3>;
 
 /// The luminance coefficients that the chromaticity coordinates of three primaries give relative to the D50 reference
 /// white (spec §8.5.4.1), red, green and blue, as an RGB working space needs them. Empty when the coordinates define no
-/// RGB working space: a y coordinate of zero, or a singular system.
+/// RGB working space: a y coordinate of zero, or a system that is singular within the rounding error of its terms, as
+/// that of two equal primaries, or of three on one line, is on every platform.
 [[nodiscard]] OPENXISF_API std::optional<std::array<double, 3>>
 luminance_coefficients(const std::array<double, 3>& x, const std::array<double, 3>& y) noexcept;
 
@@ -93,8 +94,9 @@ private:
 /// real sample format, in its pixel storage model. Samples are mapped from its representable range to [0, 1] and back
 /// (spec §8.5.5, equation [4]), and integer samples are rounded to the nearest value.
 /// @throws usage_error (errc::invalid_argument) when image is not a CIE L*a*b* image of three channels or more and real
-///         samples with a representable range, or pixels does not have image.data_size() bytes; and
-///         (errc::invalid_rgb_working_space) when its RGB working space is not valid.
+///         samples with a representable range, of finite bounds in increasing order and of finite width, or pixels
+///         does not have image.data_size() bytes; and (errc::invalid_rgb_working_space) when its RGB working space is
+///         not valid.
 OPENXISF_API void convert_rgb_to_lab(std::span<std::byte> pixels, const image_info& image);
 
 /// Converts the pixel data of a CIE L*a*b* image to RGB components, in place: what a decoder does after it reads the

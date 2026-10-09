@@ -43,4 +43,20 @@ namespace openxisf::test {
     return result;
 }
 
+/// The bytes of an ICC profile, whose content the library keeps without looking at it beyond its header: the pattern,
+/// with the size of the profile in its first four bytes and the signature `acsp` at byte 36 (ICC.1:2022 §7.2). size is
+/// at least 128 and below 2^32.
+[[nodiscard]] inline std::vector<std::byte> icc_profile(std::size_t size = 132)
+{
+    std::vector<std::byte> profile = pattern(size);
+    for (std::size_t i = 0; i < 4; ++i) {
+        profile[i] = static_cast<std::byte>((size >> (8 * (3 - i))) & 0xFF);
+    }
+    const std::string_view signature = "acsp";
+    for (std::size_t i = 0; i < signature.size(); ++i) {
+        profile[36 + i] = static_cast<std::byte>(signature[i]);
+    }
+    return profile;
+}
+
 } // namespace openxisf::test

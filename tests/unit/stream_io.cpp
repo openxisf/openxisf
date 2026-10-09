@@ -11,6 +11,13 @@
 
 #include <gtest/gtest.h>
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -19,8 +26,11 @@
 #include <istream>
 #include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <streambuf>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -73,6 +83,108 @@ protected:
     }
 };
 
+// A buffer whose first read throws, like a device that fails once.
+class failing_once_buffer : public std::stringbuf
+{
+public:
+    explicit failing_once_buffer(const std::string& content) : std::stringbuf(content) {}
+
+protected:
+    std::streamsize xsgetn(char* destination, std::streamsize count) override
+    {
+        if (!failed_) {
+            failed_ = true;
+            throw injected_fault();
+        }
+        return std::stringbuf::xsgetn(destination, count);
+    }
+
+private:
+    bool failed_ = false;
+};
+
+// The two ends of a pipe, as binary C streams that cannot seek. Both are closed on destruction.
+class pipe_streams
+{
+public:
+    pipe_streams()
+    {
+        std::array<int, 2> ends{};
+#if defined(_WIN32)
+        const int made = _pipe(ends.data(), 4096, _O_BINARY);
+#else
+        const int made = ::pipe(ends.data());
+#endif
+        if (made != 0) {
+            throw std::runtime_error("cannot create a pipe");
+        }
+        // The destructor does not run when the constructor throws, so what was opened is closed here.
+        read_ = open(ends[0], "rb");
+        if (read_ == nullptr) {
+            close_descriptor(ends[0]);
+            close_descriptor(ends[1]);
+            throw std::runtime_error("cannot open a stream on a pipe");
+        }
+        write_ = open(ends[1], "wb");
+        if (write_ == nullptr) {
+            close_descriptor(ends[1]);
+            (void)std::fclose(read_); // NOLINT(cppcoreguidelines-owning-memory): the stream is owned
+            throw std::runtime_error("cannot open a stream on a pipe");
+        }
+    }
+
+    ~pipe_streams()
+    {
+        close_write_end();
+        (void)std::fclose(read_); // NOLINT(cppcoreguidelines-owning-memory): the stream is owned
+    }
+
+    pipe_streams(const pipe_streams&) = delete;
+    pipe_streams& operator=(const pipe_streams&) = delete;
+
+    [[nodiscard]] std::FILE* read_end() const noexcept
+    {
+        return read_;
+    }
+
+    [[nodiscard]] std::FILE* write_end() const noexcept
+    {
+        return write_;
+    }
+
+    // Closes the end that writes, so that the other end reads to the end of the data.
+    void close_write_end() noexcept
+    {
+        if (write_ != nullptr) {
+            (void)std::fclose(write_); // NOLINT(cppcoreguidelines-owning-memory): the stream is owned
+            write_ = nullptr;
+        }
+    }
+
+private:
+    // A stream on the descriptor, which then owns it; null when there is none, and the descriptor is still open.
+    static std::FILE* open(int descriptor, const char* mode) noexcept
+    {
+#if defined(_WIN32)
+        return _fdopen(descriptor, mode);
+#else
+        return ::fdopen(descriptor, mode); // NOLINT(cppcoreguidelines-owning-memory): pipe_streams closes it
+#endif
+    }
+
+    static void close_descriptor(int descriptor) noexcept
+    {
+#if defined(_WIN32)
+        (void)_close(descriptor);
+#else
+        (void)::close(descriptor);
+#endif
+    }
+
+    std::FILE* read_ = nullptr;
+    std::FILE* write_ = nullptr;
+};
+
 // A buffer that can only append, like a pipe.
 class append_only_buffer : public std::streambuf
 {
@@ -119,13 +231,23 @@ TEST(stdio_source, reads_from_its_start_position_to_the_end)
 TEST(stdio_source, a_stream_that_shrinks_after_construction_is_end_of_data)
 {
     const temp_directory directory;
-    write_file(directory.path() / "data.bin", openxisf::test::pattern(std::size_t{1} << 20));
+    const std::vector<std::byte> data = openxisf::test::pattern(std::size_t{1} << 20);
+    write_file(directory.path() / "data.bin", data);
     const c_file file(directory.path() / "data.bin", "rb");
     const openxisf::stdio_source source(file.get());
     std::filesystem::resize_file(directory.path() / "data.bin", 1000);
     std::array<std::byte, 4> destination{};
 
     EXPECT_TRUE(throws<io_error>(errc::end_of_data, [&] { source.read(500'000, destination); }));
+    // What remains is still read.
+    source.read(996, destination);
+    EXPECT_EQ(text(destination), text(std::span(data).subspan(996, 4)));
+}
+
+TEST(stdio_source, refuses_a_stream_that_cannot_seek)
+{
+    const pipe_streams pipe;
+    EXPECT_TRUE(throws<io_error>(errc::not_seekable, [&] { openxisf::stdio_source source(pipe.read_end()); }));
 }
 
 TEST(stdio_source, refuses_a_null_stream)
@@ -162,6 +284,22 @@ TEST(stdio_sink, a_stream_that_cannot_be_written_is_write_failed)
 
     EXPECT_TRUE(throws<io_error>(errc::write_failed, [&] { sink.write(bytes("abc")); }));
     EXPECT_EQ(sink.position(), 0U);
+}
+
+TEST(stdio_sink, writes_a_stream_that_cannot_seek_in_order)
+{
+    pipe_streams pipe;
+    openxisf::stdio_sink sink(pipe.write_end());
+    EXPECT_FALSE(sink.can_rewrite());
+    sink.write(bytes("abc"));
+    EXPECT_TRUE(throws<usage_error>(errc::invalid_argument, [&] { sink.rewrite(0, bytes("x")); }));
+    sink.finish();
+    EXPECT_EQ(sink.position(), 3U);
+
+    pipe.close_write_end();
+    std::array<char, 4> received{};
+    EXPECT_EQ(std::fread(received.data(), 1, received.size(), pipe.read_end()), 3U);
+    EXPECT_EQ(std::string_view(received.data(), 3), "abc");
 }
 
 TEST(stdio_sink, refuses_a_null_stream)
@@ -205,6 +343,19 @@ TEST(istream_source, a_stream_that_ends_early_is_end_of_data_and_one_that_fails_
 
     EXPECT_TRUE(throws<io_error>(errc::end_of_data, [&] { ending_source.read(0, destination); }));
     EXPECT_TRUE(throws<io_error>(errc::read_failed, [&] { failing_source.read(0, destination); }));
+}
+
+TEST(istream_source, reads_again_after_a_failed_read)
+{
+    // The failure sets badbit, which the source clears before each read.
+    failing_once_buffer content("0123456789");
+    std::istream stream(&content);
+    const openxisf::istream_source source(stream);
+    std::array<std::byte, 4> destination{};
+
+    EXPECT_TRUE(throws<io_error>(errc::read_failed, [&] { source.read(2, destination); }));
+    source.read(2, destination);
+    EXPECT_EQ(text(destination), "2345");
 }
 
 TEST(ostream_sink, writes_and_rewrites_from_its_start_position)

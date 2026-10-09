@@ -9,6 +9,7 @@
 
 #include <openxisf/error.h>
 
+#include "core/xoshiro.h"
 #include "support/bytes.h"
 #include "support/throws.h"
 
@@ -192,6 +193,23 @@ std::vector<std::byte> sized_frame(const std::vector<std::byte>& data, unsigned 
     return joined(joined(magic_number(), byte_values({0x20, declared})), raw_block(data));
 }
 
+// A block that repeats value size times, an RLE_Block (RFC 8878 §3.1.1.2), which is not the last of its frame.
+std::vector<std::byte> rle_block(std::byte value, std::size_t size)
+{
+    const auto header = static_cast<std::uint32_t>((1U << 1U) | (size << 3U));
+    return joined(byte_values({header & 0xFFU, (header >> 8U) & 0xFFU, (header >> 16U) & 0xFFU}), {value});
+}
+
+// The last block of a frame, a Compressed_Block (RFC 8878 §3.1.1.3) that holds literals alone: fewer than 32 bytes in
+// a Raw_Literals_Block, and no sequences.
+std::vector<std::byte> literals_block(const std::vector<std::byte>& literals)
+{
+    const std::vector<std::byte> content =
+        joined(joined(byte_values({static_cast<unsigned int>(literals.size() << 3U)}), literals), byte_values({0}));
+    const auto header = static_cast<std::uint32_t>(1U | (2U << 1U) | (content.size() << 3U));
+    return joined(byte_values({header & 0xFFU, (header >> 8U) & 0xFFU, (header >> 16U) & 0xFFU}), content);
+}
+
 TEST(zstd_codec, decodes_exactly_the_declared_size_from_the_whole_frame)
 {
     const std::vector<std::byte> data = pattern(1000);
@@ -254,6 +272,37 @@ TEST(zstd_codec, a_frame_that_declares_its_size_needs_no_window)
     const std::vector<std::byte> frame =
         joined(joined(magic_number(), byte_values({0x80, (30U - 10U) << 3U, 100, 0, 0, 0})), raw_block(data));
     EXPECT_EQ(decoded(zstd_decoder(1024), frame, 100), data);
+}
+
+TEST(zstd_codec, decodes_unsized_frames_of_rle_and_compressed_blocks)
+{
+    // 1000 bytes of 'a' in an RLE block, then "xyz" as the literals of a compressed block, in a frame that declares no
+    // content size and a window of 1 KiB.
+    const std::vector<std::byte> frame =
+        joined(joined(joined(magic_number(), byte_values({0x00, 0x00})), rle_block(std::byte{'a'}, 1000)),
+               literals_block(bytes("xyz")));
+    const std::vector<std::byte> data = joined(std::vector<std::byte>(1000, std::byte{'a'}), bytes("xyz"));
+    expect_exact_sizes(zstd_decoder(no_window_limit), frame, data);
+    EXPECT_EQ(decoded(zstd_decoder(1024), frame, data.size()), data);
+}
+
+TEST(zstd_codec, the_frames_of_the_library_need_no_window)
+{
+    // zstd_compress() writes frames that declare their content size, so the window limit, which applies only to
+    // frames that do not, never refuses them. Here the data repeat after 64 KiB, far beyond the smallest window.
+    constexpr std::size_t period = std::size_t{64} << 10;
+    openxisf::detail::xoshiro256starstar random({7, 8, 9, 10});
+    std::vector<std::byte> data(4 * period);
+    for (std::size_t i = 0; i < period; ++i) {
+        data[i] = static_cast<std::byte>(random() & 0xFFU);
+    }
+    for (std::size_t i = period; i < data.size(); ++i) {
+        data[i] = data[i - period];
+    }
+    std::vector<std::byte> frame;
+    zstd_compress(data, 19, frame);
+    ASSERT_LT(frame.size(), data.size() / 2);
+    EXPECT_EQ(decoded(zstd_decoder(1024), frame, data.size()), data);
 }
 
 } // namespace

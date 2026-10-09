@@ -97,9 +97,10 @@ TEST(conformance_baseline_encoder, writes_properties_of_every_scalar_type_of_8_t
     properties.set("Test:Float32", 9.5F);
     properties.set("Test:Float64", -10.25);
 
-    const openxisf::reader unit = openxisf::test::open_unit(openxisf::test::written(output), {.strict = true});
+    const std::vector<std::byte> file = openxisf::test::written(output);
+    const openxisf::reader unit = openxisf::test::open_unit(file, {.strict = true});
     EXPECT_EQ(unit.properties(), output.properties());
-    const auto header = openxisf::test::parsed_header(openxisf::test::written(output));
+    const auto header = openxisf::test::parsed_header(file);
     for (pugi::xml_node property = header->document_element().child("Property"); !property.empty();
          property = property.next_sibling("Property")) {
         // As plain-text values (spec §11.1.4).

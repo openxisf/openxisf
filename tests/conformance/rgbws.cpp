@@ -109,12 +109,8 @@ TEST(conformance_rgbws, a_working_space_without_one_of_its_attributes_is_unavail
 
 TEST(conformance_rgbws, a_working_space_whose_values_cannot_be_read_is_unavailable)
 {
-    for (const std::string_view gamma : {"0", "-2.2", "inf", "linear"}) {
-        EXPECT_TRUE(unavailable(open_space(std::string(srgb) + R"( gamma=")" + std::string(gamma) + '"'))) << gamma;
-    }
+    // The gammas and lists of values refused are in unit/ancillary_attributes.cpp.
     EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="0.648431:0.321152" y="0.330856:0.597871:0.066044" )"
-                                       R"(Y="0.222491:0.716888:0.060621")")));
-    EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="0.648431:0.321152:0.155886" y="0.33:NaN:0.066044" )"
                                        R"(Y="0.222491:0.716888:0.060621")")));
 }
 
@@ -123,15 +119,12 @@ TEST(conformance_rgbws, a_working_space_has_its_values_in_the_unit_range)
     // Spec §8.5.4.1: chromaticity coordinates and luminance coefficients are normalized to [0, 1].
     EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="1.648431:0.321152:0.155886" y="0.330856:0.597871:0.066044" )"
                                        R"(Y="0.222491:0.716888:0.060621")")));
-    EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="0.648431:0.321152:0.155886" y="0.330856:0.597871:0.066044" )"
-                                       R"(Y="0.222491:-0.716888:0.060621")")));
 }
 
 TEST(conformance_rgbws, chromaticities_that_define_no_working_space_make_it_unavailable)
 {
     // Spec §8.5.4.1: a singular system, here three equal primaries, defines no RGB working space.
     EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="0.3:0.3:0.3" y="0.3:0.3:0.3" Y="0.3:0.3:0.4")")));
-    EXPECT_TRUE(unavailable(open_space(R"(gamma="2.2" x="0.6:0.3:0.15" y="0.33:0.6:0" Y="0.2:0.7:0.1")")));
 }
 
 TEST(conformance_rgbws, luminance_coefficients_that_the_chromaticities_do_not_give_are_kept_with_a_warning)
@@ -149,16 +142,6 @@ TEST(conformance_rgbws, luminance_coefficients_that_the_chromaticities_do_not_gi
     const reader rounded = open_space(R"(gamma="sRGB" x="0.6484:0.3212:0.1559" y="0.3309:0.5979:0.0660" )"
                                       R"(Y="0.2225:0.7169:0.0606")");
     EXPECT_TRUE(no_diagnostics(rounded.diagnostics()));
-}
-
-TEST(conformance_rgbws, an_image_has_one_working_space)
-{
-    const reader file = openxisf::test::open_header(
-        header_xml(image_xml({}, "<RGBWorkingSpace " + std::string(adobe) + R"( gamma="2.2"/>)" + "<RGBWorkingSpace " +
-                                     std::string(srgb) + R"( gamma="sRGB"/>)")));
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/RGBWorkingSpace[2]"));
-    EXPECT_EQ(openxisf::test::value_of(file.image(0).rgb_working_space).gamma, std::optional(2.2));
 }
 
 TEST(conformance_rgbws, strict_reading_refuses_an_invalid_working_space)

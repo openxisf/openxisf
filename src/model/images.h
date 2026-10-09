@@ -14,9 +14,9 @@
 #include "model/ancillary_budget.h"
 #include "model/outline.h"
 #include "model/properties.h"
+#include "model/tables.h"
 
 #include <cstddef>
-#include <unordered_map>
 #include <vector>
 
 // The images of a unit (spec §11.5): every Image and Thumbnail element of its header, read once, with what is
@@ -30,8 +30,7 @@ namespace openxisf::detail {
 struct unit_objects
 {
     unit_properties properties{};
-    /// The table of each Table element that could be read, by the index of its element.
-    std::unordered_map<std::size_t, table> tables{};
+    unit_tables tables{};
     ancillary_elements ancillary{};
 };
 
@@ -60,7 +59,9 @@ struct unit_images
 ///   pixel data of the geometry are errors, and leave the image or thumbnail out;
 /// - a thumbnail that is not two-dimensional, of UInt8 or UInt16 samples, Gray or RGB, with at most one alpha channel,
 ///   or whose pixel data cannot be loaded, is an error, and is left out;
-/// - a table with the identifier of a property or an earlier table of its object is an error, and is left out;
+/// - a table with the identifier of a property or an earlier table of its object is an error, and is left out, and so
+///   is a table that is not read since a cell has its value left in its data block, whose identifier is kept for the
+///   tables after it, as the identifiers of properties so left are;
 /// - a copy beyond the budget is an error, and the association or listing is left out;
 /// - a floating point image without bounds, malformed bounds or bounds on a thumbnail, an unknown image type or
 ///   orientation, a negative offset, an id outside its grammar or of another image, and a uuid that is malformed or not

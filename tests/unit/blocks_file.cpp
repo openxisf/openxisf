@@ -12,6 +12,7 @@
 #include "support/bytes.h"
 #include "support/fixture_builder.h"
 #include "support/throws.h"
+#include "support/virtual_source.h"
 
 #include <gtest/gtest.h>
 
@@ -30,6 +31,7 @@ using openxisf::detail::index_element;
 using openxisf::detail::read_block_index;
 using openxisf::detail::thread_safe_source;
 using openxisf::test::blocks_file;
+using openxisf::test::blocks_file_parts;
 using openxisf::test::bytes;
 using openxisf::test::index_entry;
 using openxisf::test::index_node;
@@ -142,6 +144,31 @@ TEST(blocks_file, refuses_a_node_outside_the_file)
     file.pop_back();
     EXPECT_TRUE(refused(errc::invalid_blocks_file, file));
     EXPECT_TRUE(refused(errc::invalid_blocks_file, blocks_file({{.length = UINT32_MAX}}, {}, 100)));
+}
+
+TEST(blocks_file, walks_nodes_and_elements_beyond_4_gib)
+{
+    // A file of 5 GiB in which only the index takes memory: the first node leads to one beyond 4 GiB, whose element
+    // points beyond 4 GiB too.
+    constexpr std::uint64_t size = std::uint64_t{5} << 30;
+    constexpr std::uint64_t node = (std::uint64_t{1} << 32) + 64;
+    const auto read_virtual = [](const std::vector<index_node>& nodes) {
+        const thread_safe_source source(openxisf::test::virtual_source(size, blocks_file_parts(nodes)));
+        return read_block_index(source, {1, 2}, {});
+    };
+    const block_index index =
+        read_virtual({{.elements = {{.id = 1, .position = 100, .length = 3}}, .next = node},
+                      {.position = node, .elements = {{.id = 2, .position = node + 56, .length = size - node - 56}}}});
+    EXPECT_EQ(index.elements,
+              (std::vector<index_element>{{.id = 1, .position = 100, .length = 3},
+                                          {.id = 2, .position = node + 56, .length = size - node - 56}}));
+
+    // A node whose element ends one byte beyond the file, and one beyond the file.
+    EXPECT_TRUE(throws<openxisf::invalid_data_error>(errc::invalid_blocks_file, [&] {
+        (void)read_virtual({{.next = size - 55}, {.position = size - 55, .elements = {{.id = 1}}}});
+    }));
+    EXPECT_TRUE(throws<openxisf::invalid_data_error>(errc::invalid_blocks_file,
+                                                     [&] { (void)read_virtual({{.next = size + 16}}); }));
 }
 
 TEST(blocks_file, refuses_an_index_that_comes_back_to_a_node)

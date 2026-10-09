@@ -165,11 +165,17 @@ TEST(conformance_table, an_empty_table_has_no_rows)
 
 TEST(conformance_table, a_table_belongs_to_the_element_that_contains_it)
 {
-    const reader file = open_body(image_xml({}, string_table("<Row><Cell>image</Cell></Row>")) +
-                                  string_table("<Row><Cell>standalone</Cell></Row>"));
+    // Spec §11.12: a Thumbnail element is an Image element under another name, so it has tables of its own.
+    const reader file = open_body(
+        image_xml({}, string_table("<Row><Cell>image</Cell></Row>") +
+                          openxisf::test::thumbnail_xml({}, string_table("<Row><Cell>thumbnail</Cell></Row>"))) +
+        string_table("<Row><Cell>standalone</Cell></Row>"));
     EXPECT_TRUE(no_diagnostics(file.diagnostics()));
     ASSERT_EQ(file.image(0).tables.size(), 1U);
     EXPECT_EQ(file.image(0).tables[0].rows.at(0).at(0), property_value("image"));
+    const openxisf::thumbnail& small = file.image(0).thumbnail.value_or(openxisf::thumbnail{});
+    ASSERT_EQ(small.tables.size(), 1U);
+    EXPECT_EQ(small.tables[0].rows.at(0).at(0), property_value("thumbnail"));
     ASSERT_EQ(file.tables().size(), 1U);
     EXPECT_EQ(file.tables()[0].rows.at(0).at(0), property_value("standalone"));
 }

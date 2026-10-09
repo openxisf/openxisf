@@ -111,16 +111,15 @@ TEST(paths, a_canonical_path_names_the_file_itself)
 {
     const openxisf::test::temp_directory directory;
     std::filesystem::create_directory(directory.path() / "sub");
-    const std::string base = native_file::canonical_path(openxisf::test::utf8(directory.path()));
-    EXPECT_EQ(native_file::canonical_path(openxisf::test::utf8(directory.path() / "sub" / "..")), base);
-    EXPECT_TRUE(is_inside(native_file::canonical_path(openxisf::test::utf8(directory.path() / "sub")), base));
+    const std::string base = native_file::find(openxisf::test::utf8(directory.path())).name();
+    EXPECT_EQ(native_file::find(openxisf::test::utf8(directory.path() / "sub" / "..")).name(), base);
+    EXPECT_TRUE(is_inside(native_file::find(openxisf::test::utf8(directory.path() / "sub")).name(), base));
     EXPECT_TRUE(throws<openxisf::io_error>(errc::open_failed, [&directory] {
-        (void)native_file::canonical_path(openxisf::test::utf8(directory.path() / "missing"));
+        (void)native_file::find(openxisf::test::utf8(directory.path() / "missing"));
     }));
 #if defined(_WIN32)
     // A device has no path in a directory.
-    EXPECT_TRUE(
-        throws<openxisf::io_error>(errc::not_a_regular_file, [] { (void)native_file::canonical_path(R"(\\.\NUL)"); }));
+    EXPECT_TRUE(throws<openxisf::io_error>(errc::not_a_regular_file, [] { (void)native_file::find(R"(\\.\NUL)"); }));
 #endif
 }
 

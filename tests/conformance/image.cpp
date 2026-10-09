@@ -165,12 +165,10 @@ TEST(conformance_image, an_image_without_geometry_or_sample_format_is_left_out)
 
 TEST(conformance_image, a_geometry_that_cannot_be_read_leaves_the_image_out)
 {
-    // Spec §11.5.1: lengths and a number of channels above zero, in the plain text grammar of unsigned integers.
-    for (const std::string_view geometry : {"2:0:1", "2:1:0", "2", "2;1;1", "-2:1:1"}) {
-        const reader file =
-            open_body(image(R"(sampleFormat="UInt8" geometry=")" + std::string(geometry) + '"', "0102"));
-        EXPECT_TRUE(left_out(file, errc::invalid_geometry, "geometry")) << geometry;
-    }
+    // Spec §11.5.1: lengths and a number of channels above zero, in the plain text grammar of unsigned integers. The
+    // geometries refused are in unit/image_attributes.cpp.
+    EXPECT_TRUE(left_out(open_body(image(R"(sampleFormat="UInt8" geometry="2:0:1")", "0102")), errc::invalid_geometry,
+                         "geometry"));
     const reader hexadecimal = open_body(image(R"(geometry="0x2:1:1" sampleFormat="UInt8")", "0102"));
     EXPECT_TRUE(no_diagnostics(hexadecimal.diagnostics()));
 }
@@ -231,10 +229,8 @@ TEST(conformance_image, an_offset_is_a_finite_value_of_at_least_zero)
     const reader negative = open_body(pair_image(R"(offset="-1")"));
     EXPECT_TRUE(tolerated(negative, errc::invalid_image, "offset"));
     EXPECT_EQ(negative.image(0).offset, -1.0);
-    for (const std::string_view offset : {"NaN", "+Inf", "one"}) {
-        const reader file = open_body(pair_image(R"(offset=")" + std::string(offset) + '"'));
-        EXPECT_TRUE(left_out(file, errc::invalid_image, "offset")) << offset;
-    }
+    // The offsets refused are in unit/image_attributes.cpp.
+    EXPECT_TRUE(left_out(open_body(pair_image(R"(offset="NaN")")), errc::invalid_image, "offset"));
 }
 
 TEST(conformance_image, a_floating_point_image_needs_bounds)
@@ -256,12 +252,10 @@ TEST(conformance_image, a_floating_point_image_needs_bounds)
 
 TEST(conformance_image, bounds_that_cannot_be_read_are_ignored)
 {
-    // They only say how to show the samples.
-    for (const std::string_view bounds : {"1", "1:0", "0:0", "a:1", "0:+Inf", "0:1:2"}) {
-        const reader file = open_body(pair_image(R"(bounds=")" + std::string(bounds) + '"'));
-        EXPECT_TRUE(tolerated(file, errc::invalid_image, "bounds")) << bounds;
-        EXPECT_EQ(file.image(0).bounds, std::nullopt) << bounds;
-    }
+    // They only say how to show the samples. The bounds refused are in unit/image_attributes.cpp.
+    const reader file = open_body(pair_image(R"(bounds="1:0")"));
+    EXPECT_TRUE(tolerated(file, errc::invalid_image, "bounds"));
+    EXPECT_EQ(file.image(0).bounds, std::nullopt);
 }
 
 TEST(conformance_image, an_unknown_image_type_or_orientation_is_ignored)
@@ -518,6 +512,20 @@ TEST(conformance_image, a_typed_read_checks_the_allocation_limit_before_it_alloc
         errc::allocation_too_large, [&file, &count] { (void)file.read_pixels<std::uint8_t>(0, {.progress = count}); }));
     EXPECT_EQ(calls, 0);
     EXPECT_TRUE(throws<openxisf::limit_error>(errc::allocation_too_large, [&file] { (void)file.read_pixels(0); }));
+
+    // A read into memory of the caller allocates nothing, typed or not, so the limit does not apply to it.
+    const std::vector<std::byte> stored = openxisf::test::pattern(1001);
+    const reader plain = open_attached(R"(<Image geometry="1001:1:1" sampleFormat="UInt8" location="attachment:{0}"/>)",
+                                       {stored}, options);
+    EXPECT_TRUE(no_diagnostics(plain.diagnostics()));
+    std::vector<std::uint8_t> samples(stored.size());
+    plain.read_pixels(0, std::span(samples));
+    EXPECT_TRUE(std::ranges::equal(std::as_bytes(std::span(samples)), stored));
+    std::vector<std::byte> data(stored.size());
+    plain.read_pixels(0, std::span(data));
+    EXPECT_EQ(data, stored);
+    EXPECT_TRUE(throws<openxisf::limit_error>(errc::allocation_too_large,
+                                              [&plain] { (void)plain.read_pixels<std::uint8_t>(0); }));
 }
 
 // -----------------------------------------------------------------------------------------------------------------

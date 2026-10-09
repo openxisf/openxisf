@@ -12,7 +12,6 @@
 #include "model/pixel_layout.h"
 #include "model/shared_objects.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -104,6 +103,48 @@ struct read_image
     std::size_t block = no_index;
     /// The pixel data of a thumbnail.
     std::vector<std::byte> pixels{};
+    /// The identifiers of the properties of the object whose values are left in their data blocks.
+    std::vector<std::string> deferred_ids{};
+};
+
+// The identifiers of the properties and tables of an object, which has each once (spec §8.4.1), gathered when its first
+// table comes: those of its properties, also of those whose values are left in their data blocks, and of its tables.
+class object_ids
+{
+public:
+    object_ids(const property_list& properties, const std::vector<std::string>& deferred)
+        : properties_(properties), deferred_(deferred)
+    {}
+
+    [[nodiscard]] bool contains(const std::string& id)
+    {
+        gather();
+        return ids_.contains(id);
+    }
+
+    void insert(const std::string& id)
+    {
+        gather();
+        ids_.insert(id);
+    }
+
+private:
+    void gather()
+    {
+        if (gathered_) {
+            return;
+        }
+        for (const property& item : properties_) {
+            ids_.insert(item.id);
+        }
+        ids_.insert(deferred_.begin(), deferred_.end());
+        gathered_ = true;
+    }
+
+    const property_list& properties_;
+    const std::vector<std::string>& deferred_;
+    std::unordered_set<std::string> ids_{};
+    bool gathered_ = false;
 };
 
 class image_reader
@@ -112,7 +153,8 @@ public:
     image_reader(const unit_outline& outline, const std::vector<data_block>& blocks, unit_objects& objects,
                  const thread_safe_source& source, const limits& limits, ancillary_budget& budget, bool load_blocks,
                  diagnostic_log& log)
-        : outline_(outline), blocks_(blocks), properties_(objects.properties), tables_(std::move(objects.tables)),
+        : outline_(outline), blocks_(blocks), properties_(objects.properties),
+          tables_(std::move(objects.tables.tables)), deferred_tables_(std::move(objects.tables.deferred_ids)),
           keywords_(std::move(objects.ancillary.keywords)), icc_profiles_(std::move(objects.ancillary.icc_profiles)),
           working_spaces_(std::move(objects.ancillary.working_spaces)),
           display_functions_(std::move(objects.ancillary.display_functions)),
@@ -186,6 +228,7 @@ private:
             }
             if (const auto found = object_of.find(index); found != object_of.end()) {
                 image->info.properties = std::move(properties_.objects[found->second].properties);
+                image->deferred_ids = std::move(properties_.objects[found->second].deferred_ids);
             }
             if (kind == element_kind::image) {
                 check_id(*image);
@@ -298,14 +341,15 @@ private:
     void associate(read_image& image)
     {
         const element_kind owner = kind_of(image.element);
-        // The kinds of which the object has taken one already.
+        // The kinds of which the object has taken one already, and the identifiers of its properties and tables.
         std::unordered_set<element_kind> taken;
+        object_ids ids(image.info.properties, image.deferred_ids);
         for_each_child(image.element, [&](std::size_t index) {
             if (kind_of(index) == element_kind::reference) {
                 check_reference(owner, index);
             }
             if (const std::optional<std::size_t> target = associated_by(owner, index)) {
-                attach(image.info, owner, *target, index, taken);
+                attach(image.info, owner, *target, index, taken, ids);
             }
         });
     }
@@ -325,13 +369,15 @@ private:
     }
 
     void attach(image_info& info, element_kind owner, std::size_t target, std::size_t by,
-                std::unordered_set<element_kind>& taken)
+                std::unordered_set<element_kind>& taken, object_ids& ids)
     {
         const error_context context{.element = outline_.path(by), .attribute = by == target ? "" : "ref"};
         const std::string what = "the " + std::string(element_name(kind_of(target))) + " " + outline_.path(target);
         const element_kind kind = kind_of(target);
         if (kind == element_kind::table) {
-            attach_table(info, target, what, context);
+            if (std::optional<table> item = take_table(target, ids, "the object", what, context)) {
+                info.tables.push_back(std::move(*item));
+            }
             return;
         }
         if (kind == element_kind::fits_keyword) {
@@ -364,21 +410,36 @@ private:
         take_single(info, kind, target, what, context);
     }
 
-    void attach_table(image_info& info, std::size_t target, const std::string& what, const error_context& context)
+    // The table of the Table element at target for an object with the identifiers ids, which gets its identifier, owner
+    // in messages. Nothing when the table cannot be read, has the identifier of another property of the object, which
+    // is an error and costs no copy, or is a copy beyond the budget; and nothing for a table that a cell leaves in its
+    // data block, whose identifier holds its place.
+    std::optional<table> take_table(std::size_t target, object_ids& ids, std::string_view owner,
+                                    const std::string& what, const error_context& context)
     {
-        std::optional<table> item = tables_.take(target, what, context, budget_, log_);
-        if (!item) {
-            return;
+        const table* found = tables_.find(target);
+        const auto deferred = deferred_tables_.find(target);
+        if (found == nullptr && deferred == deferred_tables_.end()) {
+            return std::nullopt;
         }
-        if (info.properties.contains(item->id) ||
-            std::ranges::any_of(info.tables, [&item](const table& other) { return other.id == item->id; })) {
+        const std::string& id = found != nullptr ? found->id : deferred->second;
+        if (ids.contains(id)) {
             log_.error(errc::duplicate_property_id,
-                       "another property of the object has the identifier " + quote(item->id) + ", so " + what +
-                           " is ignored",
+                       "another property of " + std::string(owner) + " has the identifier " + quote(id) + ", so " +
+                           what + " is ignored",
                        {.element = context.element, .attribute = context.attribute.empty() ? "id" : "ref"});
-            return;
+            tables_.release(target);
+            return std::nullopt;
         }
-        info.tables.push_back(std::move(*item));
+        if (found == nullptr) {
+            ids.insert(id);
+            return std::nullopt;
+        }
+        std::optional<table> item = tables_.take(target, what, context, budget_, log_);
+        if (item) {
+            ids.insert(item->id);
+        }
+        return item;
     }
 
     [[nodiscard]] bool is_read(element_kind kind, std::size_t target) const
@@ -484,41 +545,49 @@ private:
     };
 
     // The images in document order: the Image elements of the root element, and the images that its Reference elements
-    // name. The images listed again are copied first, while every image is intact, each counted against the budget;
-    // then each Image element moves its own image into its place.
+    // name. Each image listed again is counted against the budget before anything is allocated for it, with the size
+    // of each image computed once, and copied while every image is intact; then each Image element moves its own image
+    // into its place.
     unit_images list()
     {
         std::vector<listed_image> order;
+        std::vector<std::optional<std::uint64_t>> sizes(images_.size());
         for_each_child(no_element, [&](std::size_t index) {
             const outline_element& element = outline_.elements[index];
             const std::size_t named = element.kind == element_kind::reference ? element.target : index;
-            if (named != no_element && slot_of_[named] != no_index && kind_of(named) == element_kind::image &&
-                (element.kind == element_kind::image || element.kind == element_kind::reference)) {
-                order.push_back({.slot = slot_of_[named], .element = index});
+            if (named == no_element || slot_of_[named] == no_index || kind_of(named) != element_kind::image ||
+                (element.kind != element_kind::image && element.kind != element_kind::reference)) {
+                return;
             }
+            const read_image& image = images_[slot_of_[named]];
+            if (index != image.element) {
+                std::optional<std::uint64_t>& size = sizes[slot_of_[named]];
+                if (!size) {
+                    size = held_size(image.info);
+                }
+                if (!budget_.copy(*size, "the image", {.element = outline_.path(index), .attribute = "ref"}, log_)) {
+                    return;
+                }
+            }
+            order.push_back({.slot = slot_of_[named], .element = index});
         });
 
-        std::vector<std::optional<image_info>> infos(order.size());
-        for (std::size_t i = 0; i < order.size(); ++i) {
-            const read_image& image = images_[order[i].slot];
-            if (order[i].element != image.element &&
-                budget_.copy(held_size(image.info), "the image",
-                             {.element = outline_.path(order[i].element), .attribute = "ref"}, log_)) {
-                infos[i] = image.info;
+        unit_images result;
+        result.infos.reserve(order.size());
+        result.blocks.reserve(order.size());
+        for (const listed_image& entry : order) {
+            const read_image& image = images_[entry.slot];
+            if (entry.element == image.element) {
+                result.infos.emplace_back();
+            } else {
+                result.infos.push_back(image.info);
             }
+            result.blocks.push_back(image.block);
         }
         for (std::size_t i = 0; i < order.size(); ++i) {
             read_image& image = images_[order[i].slot];
             if (order[i].element == image.element) {
-                infos[i] = std::move(image.info);
-            }
-        }
-
-        unit_images result;
-        for (std::size_t i = 0; i < order.size(); ++i) {
-            if (std::optional<image_info>& info = infos[i]; info) {
-                result.infos.push_back(std::move(*info));
-                result.blocks.push_back(images_[order[i].slot].block);
+                result.infos[i] = std::move(image.info);
             }
         }
         return result;
@@ -528,24 +597,16 @@ private:
     std::vector<table> standalone_tables()
     {
         std::vector<table> result;
+        object_ids ids(properties_.standalone, properties_.standalone_deferred_ids);
         for_each_child(no_element, [&](std::size_t index) {
             if (kind_of(index) != element_kind::table) {
                 return;
             }
-            const error_context context{.element = outline_.path(index)};
-            std::optional<table> item =
-                tables_.take(index, "the table " + outline_.path(index), context, budget_, log_);
-            if (!item) {
-                return;
+            const std::string what = "the table " + outline_.path(index);
+            if (std::optional<table> item =
+                    take_table(index, ids, "the root element", what, {.element = outline_.path(index)})) {
+                result.push_back(std::move(*item));
             }
-            if (properties_.standalone.contains(item->id) ||
-                std::ranges::any_of(result, [&item](const table& other) { return other.id == item->id; })) {
-                log_.error(errc::duplicate_property_id,
-                           "another property of the root element has the identifier " + quote(item->id),
-                           {.element = context.element, .attribute = "id"});
-                return;
-            }
-            result.push_back(std::move(*item));
         });
         return result;
     }
@@ -814,6 +875,8 @@ private:
     const std::vector<data_block>& blocks_;
     unit_properties& properties_;
     shared_objects<table> tables_;
+    // The identifier of each table that a cell leaves in its data block, by the index of its element.
+    std::unordered_map<std::size_t, std::string> deferred_tables_;
     shared_objects<fits_keyword> keywords_;
     shared_objects<std::vector<std::byte>> icc_profiles_;
     shared_objects<rgb_working_space> working_spaces_;

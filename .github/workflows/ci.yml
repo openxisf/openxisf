@@ -100,7 +100,7 @@ jobs:
 
       - name: SPDX headers
         run: |
-          missing=$(git ls-files -z '*.h' '*.cpp' '*.cmake' '*.in' '*.yml' '*CMakeLists.txt' |
+          missing=$(git ls-files -z '*.h' '*.cpp' '*.cmake' '*.in' '*.yml' '*.sh' '*.py' '*.js' '*CMakeLists.txt' |
             xargs -0 grep -L 'SPDX-License-Identifier: Apache-2.0' || true)
           if [ -n "$missing" ]; then
             echo "::error::Missing SPDX header in: $missing"
@@ -154,10 +154,12 @@ jobs:
             runner: ubuntu-24.04-arm
             preset: linux-gcc-release
             cxx: g++
+          # Also without the SIMD kernels, so that their scalar fallback runs on x64 too.
           - name: clang-18 libstdc++ x64 release
             runner: ubuntu-24.04
             preset: linux-clang-release
             cxx: clang++-18
+            args: -DOPENXISF_ENABLE_SIMD=OFF
           - name: clang-18 libc++ x64 release
             runner: ubuntu-24.04
             preset: linux-clang-libcxx-release
@@ -198,7 +200,46 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
-  # The sanitizer presets run the unit tests only.
+  # The oldest compilers supported, GCC 11 and Clang 15 (with libstdc++ 11), with the dependencies of Ubuntu 22.04. It
+  # runs in a container of that release, which outlives its runner image, and takes CMake from PyPI, since the CMake of
+  # Ubuntu 22.04 is older than the minimum.
+  oldest-compilers:
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    name: ${{ matrix.name }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc-11 x64 release
+            preset: linux-gcc-release
+            cxx: g++-11
+          - name: clang-15 x64 release
+            preset: linux-clang-release
+            cxx: clang++-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the compilers and the dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends g++-11 clang-15 ninja-build python3-pip \
+            pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev
+          pip3 install cmake
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DOPENXISF_WARNINGS_AS_ERRORS=ON -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  # The sanitizer presets run every test but the chain of the installed package (label package).
   sanitizers:
     runs-on: ubuntu-24.04
     name: ${{ matrix.name }}
@@ -216,13 +257,35 @@ jobs:
           - name: clang-18 TSan
             preset: linux-clang-tsan
             cxx: clang++-18
+          # The parallel work of oneTBB. vcpkg builds the dependencies with the instrumentation, oneTBB included, so
+          # that ThreadSanitizer sees the synchronization of its scheduler; Clang builds them, as it builds the project.
+          - name: clang-18 TSan with oneTBB
+            preset: linux-clang-tsan-tbb
+            cxx: clang++-18
+            vcpkg: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install the dependencies
+        if: ${{ !matrix.vcpkg }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev
+
+      - name: Build the dependencies with Clang
+        if: ${{ matrix.vcpkg }}
+        run: |
+          echo "CC=clang-18" >> "$GITHUB_ENV"
+          echo "CXX=clang++-18" >> "$GITHUB_ENV"
+
+      # By name, so that the binary cache holds oneTBB, which the manifest has as a feature.
+      - uses: ./.github/actions/setup-vcpkg
+        if: ${{ matrix.vcpkg }}
+        with:
+          cache-key: linux-tsan
+          triplet: x64-linux-tsan
+          overlay-triplets: cmake/vcpkg
+          packages: gtest lz4 pugixml tbb zlib zstd
 
       # The randomized address space of the 24.04 kernel is larger than Clang 18's sanitizers support.
       - name: Lower the address-space randomization
@@ -275,6 +338,23 @@ jobs:
           path: out/build/linux-clang-fuzz/fuzz/artifacts
           if-no-files-found: ignore
 
+      # The targets built as OSS-Fuzz builds them (fuzz/oss-fuzz/build.sh): no build type, the optimization and the
+      # instrumentation in the flags of the compiler, and libFuzzer as the engine of OPENXISF_FUZZING_ENGINE. Each runs
+      # its seeds once.
+      - name: Build and run the targets with a fuzzing engine
+        env:
+          CXXFLAGS: -O1 -fno-omit-frame-pointer -gline-tables-only -fsanitize=address,undefined,fuzzer-no-link
+        run: |
+          cmake -S . -B out/build/fuzzing-engine -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-18 -DOPENXISF_WARNINGS_AS_ERRORS=ON -DOPENXISF_BUILD_TESTS=OFF \
+            -DOPENXISF_BUILD_SAMPLES=OFF -DOPENXISF_INSTALL=OFF -DOPENXISF_BUILD_FUZZERS=ON \
+            -DOPENXISF_FUZZING_ENGINE=-fsanitize=fuzzer
+          cmake --build out/build/fuzzing-engine
+          for seeds in fuzz/seeds/*/; do
+            target=$(basename "$seeds")
+            "out/build/fuzzing-engine/bin/fuzz_$target" -runs=0 "$seeds"
+          done
+
   tidy:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -295,12 +375,53 @@ jobs:
           cmake --preset linux-clang-release -DCMAKE_CXX_COMPILER=clang++-18 -DOPENXISF_BUILD_BENCHMARKS=ON \
             -DOPENXISF_WITH_TBB=ON -DOPENXISF_WITH_OPENSSL=ON
 
-      # tests/package/main.cpp is built by its own project, which defines EXPECTED_VERSION. The Windows platform layer
-      # (*_win32.cpp) does not compile on Linux.
+      # tests/package/main.cpp is built by its own project, which defines EXPECTED_VERSION as the version of the
+      # OpenXISF it finds; here it is that of CMakeLists.txt. The Windows platform layer (*_win32.cpp) does not compile
+      # on Linux.
       - name: clang-tidy
         run: |
+          version=$(sed -n 's/^    VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)
+          test -n "$version"
           git ls-files '*.cpp' ':!:*_win32.cpp' | xargs -P "$(nproc)" -n 1 \
-            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg='-DEXPECTED_VERSION="0.5.0"'
+            clang-tidy -p out/build/linux-clang-release --quiet --extra-arg="-DEXPECTED_VERSION=\"$version\""
+
+  # OpenXISF in the build of another project (tests/package): from its sources through FetchContent, which gives that
+  # project the library alone, and installed, through its pkg-config file.
+  consumers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev
+
+      - name: Build from the sources
+        run: |
+          cmake -S tests/package -B "$RUNNER_TEMP/sources" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14 -DOPENXISF_CONSUMED_AS=sources -DOPENXISF_SOURCE_DIR="$GITHUB_WORKSPACE" \
+            -DOPENXISF_WARNINGS_AS_ERRORS=ON
+          cmake --build "$RUNNER_TEMP/sources"
+          "$RUNNER_TEMP/sources/consumer"
+
+      - name: Install the library
+        run: |
+          cmake --preset linux-gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DOPENXISF_WARNINGS_AS_ERRORS=ON \
+            -DOPENXISF_BUILD_TESTS=OFF -DOPENXISF_BUILD_SAMPLES=OFF -DOPENXISF_BUILD_FUZZERS=OFF
+          cmake --build --preset linux-gcc-release
+          cmake --install out/build/linux-gcc-release --prefix "$RUNNER_TEMP/prefix"
+
+      - name: Build through pkg-config
+        run: |
+          export PKG_CONFIG_PATH="$RUNNER_TEMP/prefix/lib/pkgconfig"
+          pkg-config --validate openxisf
+          echo "::notice::pkg-config: $(pkg-config --static --cflags --libs openxisf)"
+          cmake -S tests/package -B "$RUNNER_TEMP/pkg-config" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14 -DOPENXISF_CONSUMED_AS=pkg-config
+          cmake --build "$RUNNER_TEMP/pkg-config"
+          "$RUNNER_TEMP/pkg-config/consumer"
 
   # The units that the tests write, checked by others than the library: every header against the XML schema of XISF,
   # which is downloaded here and never committed, and every unit by an independent reader, xisftool of xisf-rs (MIT),
@@ -406,6 +527,14 @@ jobs:
             arch: x64
             triplet: x64-windows
             preset: clang-cl-release
+          # The oldest compiler supported: the MSVC of Visual Studio 2022. Its binary cache is its own, since vcpkg
+          # builds the dependencies again for another compiler.
+          - name: msvc x64 release (Visual Studio 2022)
+            runner: windows-2022
+            arch: x64
+            triplet: x64-windows
+            preset: msvc-release
+            cache: -vs2022
           - name: msvc arm64 release
             runner: windows-11-arm
             arch: arm64
@@ -421,7 +550,7 @@ jobs:
 
       - uses: ./.github/actions/setup-vcpkg
         with:
-          cache-key: windows-${{ matrix.triplet }}
+          cache-key: windows-${{ matrix.triplet }}${{ matrix.cache }}
           triplet: ${{ matrix.triplet }}
 
       - name: Configure
@@ -451,6 +580,12 @@ jobs:
             prefix: mingw-w64-ucrt-x86_64
             compiler: gcc
             preset: msys2-ucrt64-gcc-release
+          - name: msys2 ucrt64 gcc release shared
+            msystem: UCRT64
+            prefix: mingw-w64-ucrt-x86_64
+            compiler: gcc
+            preset: msys2-ucrt64-gcc-release
+            args: -DBUILD_SHARED_LIBS=ON
           - name: msys2 clang64 release
             msystem: CLANG64
             prefix: mingw-w64-clang-x86_64
@@ -475,7 +610,7 @@ jobs:
             ${{ matrix.prefix }}-gtest
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -DOPENXISF_WARNINGS_AS_ERRORS=ON
+        run: cmake --preset ${{ matrix.preset }} -DOPENXISF_WARNINGS_AS_ERRORS=ON ${{ matrix.args }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -497,13 +632,31 @@ jobs:
             runner: macos-15
             preset: macos-release
             args: -DCMAKE_PREFIX_PATH=/opt/homebrew
+          - name: appleclang arm64 release shared
+            runner: macos-15
+            preset: macos-release
+            args: -DCMAKE_PREFIX_PATH=/opt/homebrew -DBUILD_SHARED_LIBS=ON
           - name: appleclang x64 release
             runner: macos-15-intel
             preset: macos-release
             vcpkg: true
             args: -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-osx
+          # The oldest compiler supported: the AppleClang of the first Xcode 16 of the image.
+          - name: appleclang arm64 release (Xcode 16)
+            runner: macos-15
+            preset: macos-release
+            xcode: "16"
+            args: -DCMAKE_PREFIX_PATH=/opt/homebrew
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select the oldest Xcode ${{ matrix.xcode }}
+        if: ${{ matrix.xcode }}
+        run: |
+          app=$(find /Applications -maxdepth 1 -name 'Xcode_${{ matrix.xcode }}.*.app' | sort | head -n 1)
+          test -n "$app"
+          echo "DEVELOPER_DIR=$app/Contents/Developer" >> "$GITHUB_ENV"
+          "$app/Contents/Developer/usr/bin/xcodebuild" -version
 
       - name: Install the dependencies
         if: ${{ !matrix.vcpkg }}
@@ -572,7 +725,8 @@ jobs:
   # A single check that stands for the whole workflow, and that a skipped platform does not break.
   required:
     if: ${{ always() }}
-    needs: [plan, lint, linux, sanitizers, fuzz, tidy, writer-output, windows, msys2, macos, vcpkg-port]
+    needs: [plan, lint, linux, oldest-compilers, sanitizers, fuzz, tidy, consumers, writer-output, windows, msys2, macos,
+            vcpkg-port]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

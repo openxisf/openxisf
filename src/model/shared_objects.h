@@ -10,6 +10,7 @@
 #include "model/held_size.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
@@ -30,6 +31,13 @@ public:
     [[nodiscard]] bool contains(std::size_t index) const
     {
         return objects_.contains(index);
+    }
+
+    /// The object of the element at index, before a use takes it, or null when the element was not read.
+    [[nodiscard]] const T* find(std::size_t index) const
+    {
+        const auto found = objects_.find(index);
+        return found == objects_.end() ? nullptr : &found->second;
     }
 
     /// Counts a use of the object of the element at index.
@@ -54,7 +62,12 @@ public:
             objects_.erase(found);
             return last;
         }
-        if (!budget.copy(held_size(found->second), what, context, log)) {
+        // Computed once for all the copies, which can be many more than the budget holds.
+        const auto [size, unknown] = sizes_.try_emplace(index);
+        if (unknown) {
+            size->second = held_size(found->second);
+        }
+        if (!budget.copy(size->second, what, context, log)) {
             return std::nullopt;
         }
         return found->second;
@@ -71,6 +84,7 @@ public:
 private:
     std::unordered_map<std::size_t, T> objects_;
     std::unordered_map<std::size_t, std::size_t> uses_{};
+    std::unordered_map<std::size_t, std::uint64_t> sizes_{};
 };
 
 } // namespace openxisf::detail

@@ -11,6 +11,10 @@
 
 namespace openxisf::detail {
 
+/// Throws usage_error unless path, a path that the application gives, is not empty (errc::invalid_argument) and is
+/// valid UTF-8 (errc::invalid_utf8). what names it in the messages, as in "the path of the data blocks file".
+void check_path_argument(std::string_view path, std::string_view what);
+
 /// The directory of the file at path, in the syntax of the system: "." for a file name alone, and a root with its
 /// separator, such as "/" or, on Windows, "C:\".
 [[nodiscard]] std::string parent_directory(std::string_view path);
@@ -29,7 +33,7 @@ namespace openxisf::detail {
 /// holds a character that no file name can hold.
 [[nodiscard]] std::string absolute_system_path(std::string_view absolute);
 
-/// True when path is inside directory, both canonical paths of the system (canonical_path()).
+/// True when path is inside directory, both canonical paths of the system (native_file::find()).
 [[nodiscard]] bool is_inside(std::string_view path, std::string_view directory) noexcept;
 
 } // namespace openxisf::detail

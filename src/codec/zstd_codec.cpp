@@ -9,6 +9,9 @@
 #include "codec/codecs.h"
 
 #include <zstd.h>
+// The values of ZSTD_ErrorCode, which ZSTD_getErrorCode() returns. That function is declared in zstd.h from 1.5.7 on,
+// and here before, and every build exports it. zstd_errors.h calls its API static-only, but these are constants, and
+// the two used here are below 100, the values that it declares stable.
 #include <zstd_errors.h>
 
 #include <algorithm>
@@ -142,6 +145,11 @@ void zstd_decompress(std::span<const std::byte> input, std::span<std::byte> outp
         throw_corrupt("the Zstandard data decode to " + std::to_string(out.pos) + " bytes, not " +
                       std::to_string(output.size()));
     }
+}
+
+bool zstd_needs_window(std::span<const std::byte> input) noexcept
+{
+    return ZSTD_getFrameContentSize(input.data(), input.size()) == ZSTD_CONTENTSIZE_UNKNOWN;
 }
 
 void zstd_compress(std::span<const std::byte> input, int level, std::vector<std::byte>& output)

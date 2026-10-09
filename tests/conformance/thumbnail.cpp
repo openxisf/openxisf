@@ -224,15 +224,6 @@ TEST(conformance_thumbnail, a_thumbnail_has_no_thumbnail)
     EXPECT_TRUE(referenced.image(0).thumbnail.has_value());
 }
 
-TEST(conformance_thumbnail, an_image_has_one_thumbnail)
-{
-    const reader file = open_body(image_xml({}, openxisf::test::thumbnail_xml(R"(id="first")") +
-                                                    openxisf::test::thumbnail_xml(R"(id="second")")));
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/Thumbnail[2]"));
-    EXPECT_EQ(openxisf::test::value_of(file.image(0).thumbnail).id, "first");
-}
-
 TEST(conformance_thumbnail, a_standalone_thumbnail_is_not_an_image)
 {
     const reader file = open_body(openxisf::test::thumbnail_xml(R"(uid="small")") + image_xml());

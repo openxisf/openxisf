@@ -10,6 +10,7 @@ add_executable(openxisf_tests
     concurrency/pixels.cpp
     concurrency/writer.cpp
     conformance/availability.cpp
+    conformance/baseline_decoder.cpp
     conformance/baseline_encoder.cpp
     conformance/byte_order.cpp
     conformance/cfa.cpp
@@ -44,7 +45,9 @@ add_executable(openxisf_tests
     support/links.cpp
     support/sparse_file.cpp
     support/temp_directory.cpp
+    support/virtual_source.cpp
     support/written_unit.cpp
+    unit/allocation.cpp
     unit/ancillary_attributes.cpp
     unit/astrometry.cpp
     unit/block_attributes.cpp
@@ -85,6 +88,7 @@ add_executable(openxisf_tests
     unit/property_text.cpp
     unit/property_types.cpp
     unit/property_value.cpp
+    unit/quote.cpp
     unit/reader.cpp
     unit/shuffle.cpp
     unit/stream_io.cpp
@@ -137,6 +141,17 @@ foreach(label concurrency conformance samples)
         TEST_FILTER "${label}_*:*/${label}_*"
         PROPERTIES LABELS ${label})
 endforeach()
+
+# The tests that take gigabytes of memory, and the large samples, also have the label slow. CTest knows them only once it
+# has discovered them, and gtest_discover_tests() splits a list of labels into arguments, so a file that CTest includes
+# after the discovered tests gives them both labels.
+set(slow_tests_file "${CMAKE_CURRENT_BINARY_DIR}/slow_tests.cmake")
+file(WRITE "${slow_tests_file}"
+    "set_tests_properties(file_source.reads_more_than_1_gib_in_one_call\n"
+    "    hash.hashes_a_message_of_more_than_4_gib_in_one_piece PROPERTIES LABELS \"unit;slow\")\n"
+    "set_tests_properties(samples_large.l1_decompresses_with_the_subblocks_of_pixinsight\n"
+    "    PROPERTIES LABELS \"samples;slow\")\n")
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES "${slow_tests_file}")
 
 # The installed package: install into a staging prefix, then configure, build and run tests/package
 # against it. The four tests are a chain; fixtures make a failed step skip the following ones. This

@@ -114,6 +114,30 @@ TEST(conformance_compression, the_inline_zlib_property_of_the_specification_deco
     EXPECT_EQ(block_data(opened, "/xisf/Property[1]"), bytes("This is a test - TEST - 1234567890"));
 }
 
+TEST(conformance_compression, a_codec_name_in_another_case_is_accepted_with_a_warning)
+{
+    // The specification names codecs in lowercase; another case names the same codec. Shuffling items of one byte
+    // changes nothing.
+    for (const std::string_view compression : {"ZLIB:34", "Zlib+SH:34:1"}) {
+        const unit opened =
+            open_body(R"(<Property id="Test" type="ByteArray" length="34" compression=")" + std::string(compression) +
+                      R"(" location="inline:base64">)"
+                      "eNoLycgsVgCiRIWS1OISBV2FENfgECBlaGRsYmpmbmFpAACzWQkd</Property>");
+        EXPECT_TRUE(
+            single_diagnostic(opened.diagnostics, severity::warning, errc::invalid_compression, "/xisf/Property[1]"))
+            << compression;
+        EXPECT_EQ(block_data(opened, "/xisf/Property[1]"), bytes("This is a test - TEST - 1234567890")) << compression;
+    }
+
+    // A name that is no codec in any case is reported as written, with no warning about its case.
+    const unit unknown = open_body(R"(<Property id="Test" type="ByteArray" length="3" compression="LZMA:3" )"
+                                   R"(location="inline:base64">YWJj</Property>)");
+    ASSERT_TRUE(
+        single_diagnostic(unknown.diagnostics, severity::error, errc::unsupported_compression, "/xisf/Property[1]"));
+    EXPECT_NE(unknown.diagnostics.front().message.find("'LZMA'"), std::string::npos)
+        << unknown.diagnostics.front().message;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Compressed blocks in units
 

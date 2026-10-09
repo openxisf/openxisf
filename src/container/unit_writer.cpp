@@ -40,6 +40,10 @@ constexpr std::uint64_t max_header_length = 0xFFFF'FFFF;
 // A number of unknown value, written at its full width in the longest header that the blocks can give.
 constexpr std::uint64_t unknown = std::numeric_limits<std::uint64_t>::max();
 
+// The characters of a subblock in the subblocks attribute: at least "1,1:", and at most two numbers of 20 digits.
+constexpr std::uint64_t shortest_subblock = 4;
+constexpr std::uint64_t longest_subblock = 42;
+
 constexpr std::array<std::byte, 4096> zeros{};
 
 compression_codec codec_of(codec value) noexcept
@@ -253,16 +257,18 @@ private:
         headers_.resize(tree_.blocks.size());
         buffers_.resize(tree_.blocks.size());
         std::uint64_t total = 0;
+        std::uint64_t subblocks = 0;
         for (std::size_t i = 0; i < tree_.blocks.size(); ++i) {
             if (tree_.blocks[i].inline_data) {
                 headers_[i] = encode_inline(tree_.blocks[i], encoding_);
             } else {
                 attached_.push_back(i);
-                check_subblock_count(tree_.blocks[i]);
+                subblocks = checked_add(subblocks, subblock_count(tree_.blocks[i]));
                 headers_[i].size = tree_.blocks[i].data().size();
                 total = checked_add(total, headers_[i].size);
             }
         }
+        check_subblock_count(subblocks);
         return total;
     }
 
@@ -275,8 +281,9 @@ private:
     void write_monolithic(std::uint64_t total)
     {
         if (encoded() && sink_.can_rewrite()) {
+            const std::uint64_t room = longest_header_size();
             progress_.start(total);
-            write_streamed();
+            write_streamed(room);
         } else if (encoded()) {
             progress_.start(checked_multiply(total, std::uint64_t{2}));
             encode_attached();
@@ -291,7 +298,8 @@ private:
     // A distributed unit (spec §9.1.2): the data blocks file first, whose index has a known size, so that the places of
     // the blocks are known before they are written, then the header file, which lists them. Both are written
     // completely before either is finished, and the data blocks file is finished first, so that a header file never
-    // names blocks that are not there yet.
+    // names blocks that are not there yet. A header too large for its length is found before either file is written:
+    // in its longest form for blocks written in one pass, and once their sizes are known for the others.
     void write_distributed(std::uint64_t total)
     {
         if (attached_.size() > std::numeric_limits<std::uint32_t>::max()) {
@@ -302,7 +310,9 @@ private:
                                    {.element = "/xisf"});
         }
         const std::uint64_t index_end = first_index_element + (attached_.size() * index_element_size);
+        std::string text;
         if (encoded() && blocks_.can_rewrite()) {
+            (void)longest_header_size();
             progress_.start(total);
             write_zeros(blocks_, index_end);
             for (const std::size_t i : attached_) {
@@ -311,6 +321,7 @@ private:
             }
             assign_index_ids();
             blocks_.rewrite(0, blocks_file_start());
+            text = format();
         } else {
             if (encoded()) {
                 progress_.start(checked_multiply(total, std::uint64_t{2}));
@@ -320,10 +331,11 @@ private:
             }
             place_attached(index_end);
             assign_index_ids();
+            text = format();
             blocks_.write(blocks_file_start());
             write_attached();
         }
-        sink_.write(bytes_of(format()));
+        sink_.write(bytes_of(text));
         blocks_.finish();
         sink_.finish();
     }
@@ -369,19 +381,24 @@ private:
         return bytes;
     }
 
-    // The subblocks of a block are listed in the header, so a very small subblock size could make it far too long. The
-    // shortest description of a subblock, "1,1:", has four characters.
-    void check_subblock_count(const block_source& block) const
+    // The subblocks of the attached blocks are listed in the header, so a very small subblock size could make it far
+    // too long: they are counted before any is compressed.
+    static void check_subblock_count(std::uint64_t subblocks)
+    {
+        if (subblocks > max_header_length / shortest_subblock) {
+            throw_header_too_large(checked_multiply(subblocks, shortest_subblock));
+        }
+    }
+
+    // The number of subblocks of a block when it is compressed, none without a codec.
+    std::uint64_t subblock_count(const block_source& block) const
     {
         if (!encoding_.codec) {
-            return;
+            return 0;
         }
         const std::uint64_t size = block.data().size();
         const std::uint64_t limit = subblock_size(compression_for(*encoding_.codec, encoding_, block));
-        const std::uint64_t count = (size / limit) + (size % limit == 0 ? 0 : 1);
-        if (count > max_header_length / 4) {
-            throw_header_too_large(checked_multiply(count, std::uint64_t{4}));
-        }
+        return (size / limit) + (size % limit == 0 ? 0 : 1);
     }
 
     std::string format() const
@@ -467,18 +484,8 @@ private:
                                            }
                                            progress_.advance(sizes.uncompressed_size);
                                        });
-                if (stored.size() < data.size()) {
-                    headers_[i].size = stored.size();
-                    headers_[i].compression = without_single_subblock(compression);
-                    if (hash) {
-                        headers_[i].checksum = block_checksum{.algorithm = hash->algorithm(), .digest = hash->finish()};
-                    }
+                if (settle_compression(headers_[i], data, stored.size(), compression, hash)) {
                     buffers_[i] = std::move(stored);
-                    continue;
-                }
-                // The block does not get smaller, and is written as it is.
-                if (encoding_.checksum) {
-                    headers_[i].checksum = checksum_of(*encoding_.checksum, data);
                 }
                 continue;
             }
@@ -536,15 +543,37 @@ private:
         }
     }
 
-    // The unit in one pass, for a sink that can rewrite: room for the longest header that the blocks can give, then
-    // each block as it is compressed and hashed, then the header in that room, with zeros after it.
-    void write_streamed()
+    // A unit written in one pass, to a sink that can rewrite, has its header written once its blocks are, so the header
+    // must be able to hold them at their longest, every subblock with numbers of 20 digits: a unit whose subblocks
+    // cannot be listed so is refused before they are.
+    void check_longest_subblocks() const
     {
+        std::uint64_t subblocks = 0;
+        for (const std::size_t i : attached_) {
+            subblocks = checked_add(subblocks, subblock_count(tree_.blocks[i]));
+        }
+        if (subblocks > max_header_length / longest_subblock) {
+            throw_header_too_large(checked_multiply(subblocks, longest_subblock));
+        }
+    }
+
+    // The size of the longest header that the attached blocks can give, for a unit written in one pass: the header
+    // finally written is no longer. A unit whose longest header is too large is refused before any byte is written,
+    // and before the progress function is told of the save.
+    std::uint64_t longest_header_size()
+    {
+        check_longest_subblocks();
         for (const std::size_t i : attached_) {
             headers_[i] = longest_header(tree_.blocks[i]);
         }
+        return format().size();
+    }
+
+    // The unit in one pass, for a sink that can rewrite: room for the longest header that the blocks can give, then
+    // each block as it is compressed and hashed, then the header in that room, with zeros after it.
+    void write_streamed(std::uint64_t room)
+    {
         // Each block is aligned before it is written, the first one included.
-        const std::uint64_t room = format().size();
         write_zeros(sink_, monolithic_header_offset + room);
         for (const std::size_t i : attached_) {
             write_zeros(sink_, aligned(sink_.position(), options_.block_alignment) - sink_.position());
@@ -552,6 +581,13 @@ private:
         }
 
         const std::string text = format();
+        // The room is that of the longest header, so the header fits it; one that did not would overwrite the blocks.
+        if (text.size() > room) {
+            throw validation_error(errc::header_too_large,
+                                   "the header has " + std::to_string(text.size()) + " bytes, more than the " +
+                                       std::to_string(room) + " reserved for it before the data blocks",
+                                   {.element = "/xisf"});
+        }
         sink_.rewrite(0, preamble(text.size()));
         sink_.rewrite(monolithic_header_offset, bytes_of(text));
     }
@@ -581,6 +617,26 @@ private:
         return header;
     }
 
+    // Completes the header of a block of data whose subblocks were compressed into stored bytes, hashed by hash: the
+    // block is stored compressed when that makes it smaller, and as it is otherwise (spec §10.6), with the checksum of
+    // what is stored. Returns whether it is stored compressed.
+    bool settle_compression(block_header& header, std::span<const std::byte> data, std::uint64_t stored,
+                            const block_compression& compression, std::optional<hasher>& hash) const
+    {
+        if (stored < data.size()) {
+            header.size = stored;
+            header.compression = without_single_subblock(compression);
+            if (hash) {
+                header.checksum = block_checksum{.algorithm = hash->algorithm(), .digest = hash->finish()};
+            }
+            return true;
+        }
+        if (encoding_.checksum) {
+            header.checksum = checksum_of(*encoding_.checksum, data);
+        }
+        return false;
+    }
+
     // Writes a block to the sink of the blocks, compressed and hashed subblock by subblock.
     void stream_block(std::size_t index)
     {
@@ -605,22 +661,12 @@ private:
                                        }
                                        progress_.advance(sizes.uncompressed_size);
                                    });
-            if (stored < data.size()) {
-                header.size = stored;
-                header.compression = without_single_subblock(compression);
-                if (hash) {
-                    header.checksum = block_checksum{.algorithm = hash->algorithm(), .digest = hash->finish()};
+            if (!settle_compression(header, data, stored, compression, hash)) {
+                // Each subblock holds its data as they are, shuffled; the data replace them.
+                for (std::size_t offset = 0; offset < data.size(); offset += piece_size) {
+                    blocks_.rewrite(header.position + offset,
+                                    data.subspan(offset, std::min(piece_size, data.size() - offset)));
                 }
-                return;
-            }
-            // The block does not get smaller, so each subblock holds its data as they are, shuffled; the data replace
-            // them.
-            for (std::size_t offset = 0; offset < data.size(); offset += piece_size) {
-                blocks_.rewrite(header.position + offset,
-                                data.subspan(offset, std::min(piece_size, data.size() - offset)));
-            }
-            if (encoding_.checksum) {
-                header.checksum = checksum_of(*encoding_.checksum, data);
             }
             return;
         }

@@ -45,7 +45,7 @@ public:
         }
     }
 
-    std::unordered_map<std::size_t, table> read()
+    unit_tables read()
     {
         for (std::size_t index = 0; index < outline_.elements.size(); ++index) {
             const outline_element& element = outline_.elements[index];
@@ -56,15 +56,21 @@ public:
                              {.element = outline_.path(index)});
             }
         }
+        // Returned as a prvalue built from local maps, which is never moved: the move constructor of a map can throw.
         std::unordered_map<std::size_t, table> tables;
+        std::unordered_map<std::size_t, std::string> deferred_ids;
         for (std::size_t index = 0; index < outline_.elements.size(); ++index) {
             if (outline_.elements[index].kind == element_kind::table) {
-                if (std::optional<table> read = read_table(index)) {
+                deferred_ = false;
+                std::optional<table> read = read_table(index);
+                if (read) {
                     tables.emplace(index, std::move(*read));
+                } else if (deferred_) {
+                    deferred_ids.emplace(index, outline_.elements[index].node.attribute("id").value());
                 }
             }
         }
-        return tables;
+        return {.tables = std::move(tables), .deferred_ids = std::move(deferred_ids)};
     }
 
 private:
@@ -280,8 +286,13 @@ private:
             }
         }
         const auto block = block_of_.find(index);
-        return values_.read(
-            {.node = node, .path = path, .block = block == block_of_.end() ? nullptr : block->second, .type = type});
+        const value_element element{
+            .node = node, .path = path, .block = block == block_of_.end() ? nullptr : block->second, .type = type};
+        if (values_.defers(element)) {
+            deferred_ = true;
+            return std::nullopt;
+        }
+        return values_.read(element);
     }
 
     // Spec §11.3.2: rows and columns attributes, when present, give the size of the table.
@@ -321,12 +332,14 @@ private:
     std::unordered_map<std::size_t, const data_block*> block_of_{};
     // The fields of each standalone Structure element read so far; nothing when it cannot be read.
     std::unordered_map<std::size_t, std::optional<std::vector<table_field>>> standalone_{};
+    // Whether the table being read has a cell whose value is left in its data block.
+    bool deferred_ = false;
 };
 
 } // namespace
 
-std::unordered_map<std::size_t, table> read_tables(const unit_outline& outline, const std::vector<data_block>& blocks,
-                                                   value_reader& values, ancillary_budget& budget, diagnostic_log& log)
+unit_tables read_tables(const unit_outline& outline, const std::vector<data_block>& blocks, value_reader& values,
+                        ancillary_budget& budget, diagnostic_log& log)
 {
     return table_reader(outline, blocks, values, budget, log).read();
 }

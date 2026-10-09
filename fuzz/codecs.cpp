@@ -124,7 +124,7 @@ void decode(reader& input, detail::compression_codec codec, std::uint64_t item_s
     std::vector<std::byte> destination(data.size());
     detail::decompress_block_into(stored, compression, limits, destination);
     require(destination == data);
-    check_shuffling(data, static_cast<std::size_t>(item_size));
+    check_shuffling(data, item_size);
 }
 
 void encode(reader& input, detail::compression_codec codec, std::uint64_t item_size, int level)
@@ -141,7 +141,7 @@ void encode(reader& input, detail::compression_codec codec, std::uint64_t item_s
         require(max_subblock_size == 0 || part.uncompressed_size <= max_subblock_size);
     }
     require(std::ranges::equal(detail::decompress_block(block.data, block.compression, {}), data));
-    check_shuffling(data, static_cast<std::size_t>(item_size));
+    check_shuffling(data, item_size);
 }
 
 } // namespace

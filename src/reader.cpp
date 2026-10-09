@@ -51,6 +51,16 @@ signature_status reader::signature() const noexcept
     return state_->signature ? signature_status::not_verified : signature_status::none;
 }
 
+std::string_view reader::signature_xml() const noexcept
+{
+    return state_->signature ? std::string_view(state_->signature->element) : std::string_view();
+}
+
+std::string_view reader::signed_xml() const noexcept
+{
+    return state_->signature ? std::string_view(state_->signature->signed_element) : std::string_view();
+}
+
 const property_list& reader::metadata() const noexcept
 {
     return state_->properties.metadata;
@@ -89,6 +99,11 @@ void reader::read_pixels(std::size_t index, std::span<std::byte> destination, co
 std::size_t reader::sample_count_of(std::size_t index, sample_format format) const
 {
     return detail::typed_sample_count(*state_, index, format);
+}
+
+void reader::check_sample_format(std::size_t index, sample_format format) const
+{
+    (void)detail::typed_image_at(*state_, index, format);
 }
 
 std::span<const diagnostic> reader::diagnostics() const noexcept

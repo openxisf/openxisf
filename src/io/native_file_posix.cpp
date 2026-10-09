@@ -86,6 +86,31 @@ void flush_directory(const std::string& path)
 
 } // namespace
 
+std::string absolute_path(const std::string& path)
+{
+    if (path.starts_with('/')) {
+        return path;
+    }
+    // getcwd() fails with ERANGE until the buffer holds the path.
+    std::string directory(256, '\0');
+    while (::getcwd(directory.data(), directory.size()) == nullptr) {
+        const std::error_code error = last_error();
+        if (error != std::errc::result_out_of_range) {
+            fail(errc::open_failed, "cannot find the current directory, from which " + path + " is taken", error);
+        }
+        directory.resize(directory.size() * 2);
+    }
+    directory.resize(std::char_traits<char>::length(directory.c_str()));
+    if (!is_valid_utf8(directory)) {
+        throw io_error(errc::open_failed,
+                       "the path of the current directory, from which " + path + " is taken, is not valid UTF-8");
+    }
+    if (!directory.ends_with('/')) {
+        directory += '/';
+    }
+    return directory + path;
+}
+
 native_file native_file::open_for_reading(const std::string& path)
 {
     // O_NONBLOCK keeps the open of a FIFO from waiting for a writer. It has no effect on regular files, which are the
@@ -119,7 +144,7 @@ std::optional<native_file> native_file::create_new(const std::string& path, std:
     return native_file(handle, std::move(name));
 }
 
-std::string native_file::canonical_path(const std::string& path)
+native_file native_file::find(const std::string& path)
 {
     // realpath() allocates the result when it is given no buffer (POSIX.1-2008).
     const std::unique_ptr<char, free_memory> resolved(::realpath(path.c_str(), nullptr));
@@ -131,7 +156,20 @@ std::string native_file::canonical_path(const std::string& path)
     if (!is_valid_utf8(canonical)) {
         throw io_error(errc::open_failed, path + " leads to a path that is not valid UTF-8");
     }
-    return canonical;
+    // A trailing separator names a directory: Linux refuses a file with it (ENOTDIR), macOS resolves it to the file.
+    if (path.ends_with('/')) {
+        struct stat status{};
+        if (::stat(canonical.c_str(), &status) == 0 && !S_ISDIR(status.st_mode)) {
+            fail(errc::open_failed, "cannot find " + path, std::make_error_code(std::errc::not_a_directory));
+        }
+    }
+    // POSIX has no portable way to ask a descriptor for its path, so nothing is opened.
+    return {closed_handle, std::move(canonical)};
+}
+
+native_file native_file::reopen_for_reading() const
+{
+    return open_for_reading(name_);
 }
 
 std::uint64_t native_file::size() const

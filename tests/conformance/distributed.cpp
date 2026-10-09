@@ -25,21 +25,25 @@
 #include "support/opened_unit.h"
 #include "support/temp_directory.h"
 #include "support/throws.h"
+#include "support/virtual_source.h"
 #include "support/written_unit.h"
 #include "xml/xml_document.h"
 
 #include <gtest/gtest.h>
 #include <pugixml.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -278,6 +282,59 @@ TEST(conformance_distributed, strict_reading_fails_with_the_error_of_the_file)
     EXPECT_TRUE(throws<openxisf::unsupported_error>(errc::unsupported_location, [&] { open_strictly({}); }));
 }
 
+// Success when function throws io_error with code and the system error.
+testing::AssertionResult throws_io_error(errc code, std::error_code system, const std::function<void()>& function)
+{
+    try {
+        function();
+    } catch (const openxisf::io_error& failure) {
+        if (failure.code() == code && failure.system_code() == system) {
+            return testing::AssertionSuccess();
+        }
+        return testing::AssertionFailure()
+               << "threw code " << static_cast<int>(failure.code()) << " with the system error "
+               << failure.system_code().value() << ": " << failure.what();
+    } catch (const std::exception& other) {
+        return testing::AssertionFailure() << "threw another exception: " << other.what();
+    }
+    return testing::AssertionFailure() << "threw nothing";
+}
+
+TEST(conformance_distributed, the_errors_of_a_resolver_keep_their_class_and_system_error)
+{
+    // A source that cannot seek is an io_error whatever its code: a strict open throws it, and so does a read of the
+    // image in its file, with the error of the system, whether the resolver or the source of the data blocks file
+    // fails. An unsupported_error keeps its class with a code of invalid data too.
+    const std::error_code denied = std::make_error_code(std::errc::permission_denied);
+    const std::string header = header_xml(row_image(3, "path(@header_dir/a.xisb):1"));
+    const auto open = [&header](openxisf::external_resolver resolver, bool strict) {
+        return openxisf::test::open_unit(bytes(header), {.strict = strict, .resolver = std::move(resolver)});
+    };
+    const std::vector<openxisf::external_resolver> pipes{
+        [denied](const external_reference&) -> std::unique_ptr<openxisf::input_source> {
+            throw openxisf::io_error(errc::not_seekable, "a pipe", denied);
+        },
+        [denied](const external_reference&) -> std::unique_ptr<openxisf::input_source> {
+            return std::make_unique<openxisf::callback_source>(100, [denied](std::uint64_t, std::span<std::byte>) {
+                throw openxisf::io_error(errc::not_seekable, "a pipe", denied);
+            });
+        }};
+    for (const openxisf::external_resolver& resolver : pipes) {
+        const reader file = open(resolver, false);
+        EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::error, errc::not_seekable, "/xisf/Image[1]"));
+        EXPECT_TRUE(throws_io_error(errc::not_seekable, denied, [&file] { (void)file.read_pixels(0); }));
+        EXPECT_TRUE(throws_io_error(errc::not_seekable, denied, [&] { (void)open(resolver, true); }));
+    }
+    const openxisf::external_resolver refusing =
+        [](const external_reference&) -> std::unique_ptr<openxisf::input_source> {
+        throw openxisf::unsupported_error(errc::invalid_location, "not here");
+    };
+    const reader refused = open(refusing, false);
+    EXPECT_TRUE(
+        throws<openxisf::unsupported_error>(errc::invalid_location, [&refused] { (void)refused.read_pixels(0); }));
+    EXPECT_TRUE(throws<openxisf::unsupported_error>(errc::invalid_location, [&] { (void)open(refusing, true); }));
+}
+
 TEST(conformance_distributed, the_number_of_external_files_is_limited)
 {
     const std::string body = row_image(3, "path(@header_dir/a.bin)") + row_image(3, "path(@header_dir/b.bin)") +
@@ -338,6 +395,47 @@ TEST(conformance_distributed, an_element_points_inside_the_file_after_its_signat
     EXPECT_TRUE(unavailable(open_at(101, 1), "/xisf/Image[1]", errc::block_out_of_bounds));
     EXPECT_TRUE(no_diagnostics(open_at(97, 3).diagnostics));
     EXPECT_TRUE(no_diagnostics(open_at(16, 3).diagnostics));
+}
+
+TEST(conformance_distributed, a_data_blocks_file_beyond_4_gib)
+{
+    // A data blocks file of 5 GiB whose bytes are computed from their offset, but for its index, which is beyond 4 GiB.
+    // A block of 5 MiB ends where the file does, and is read in pieces as its progress is reported; another one
+    // starts a byte later. A block of almost 5 GiB fits from byte 64, which is never read, and one a byte longer
+    // does not.
+    constexpr std::uint64_t size = std::uint64_t{5} << 30;
+    constexpr std::uint64_t node = (std::uint64_t{1} << 32) + 64;
+    constexpr std::size_t width = std::size_t{5} << 20;
+    constexpr std::uint64_t position = size - width;
+    const std::vector<openxisf::test::placed_bytes> parts =
+        openxisf::test::blocks_file_parts({{.next = node},
+                                           {.position = node,
+                                            .elements = {{.id = 1, .position = position, .length = width},
+                                                         {.id = 2, .position = position + 1, .length = width},
+                                                         {.id = 3, .position = 64, .length = size - 64},
+                                                         {.id = 4, .position = 64, .length = size - 63}}}});
+    const std::string body =
+        row_image(width, "path(@header_dir/unit.xisb):1") + row_image(width, "path(@header_dir/unit.xisb):2") +
+        row_image(size - 64, "path(@header_dir/unit.xisb):3") + row_image(size - 63, "path(@header_dir/unit.xisb):4");
+    const reader file(
+        std::make_unique<openxisf::memory_source>(bytes(header_xml(body))),
+        {.resolver = [&parts](const external_reference&) { return openxisf::test::virtual_source(size, parts); }});
+    const std::span<const openxisf::diagnostic> diagnostics = file.diagnostics();
+    ASSERT_EQ(diagnostics.size(), 2U) << openxisf::test::describe(diagnostics);
+    EXPECT_EQ(diagnostics[0].code, errc::block_out_of_bounds);
+    EXPECT_EQ(diagnostics[0].context.element, "/xisf/Image[2]");
+    EXPECT_EQ(diagnostics[1].code, errc::block_out_of_bounds);
+    EXPECT_EQ(diagnostics[1].context.element, "/xisf/Image[4]");
+    EXPECT_EQ(file.image(2).data_size(), size - 64);
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> calls;
+    const openxisf::pixel_read_options options{.progress = [&calls](std::uint64_t done, std::uint64_t total) {
+        calls.emplace_back(done, total);
+        return true;
+    }};
+    EXPECT_EQ(file.read_pixels(0, options), openxisf::test::virtual_bytes(position, width));
+    EXPECT_EQ(calls, (std::vector<std::pair<std::uint64_t, std::uint64_t>>{
+                         {0, width}, {std::uint64_t{4} << 20, width}, {width, width}}));
 }
 
 TEST(conformance_distributed, a_malformed_index_fails_the_blocks_that_need_it)
@@ -666,13 +764,49 @@ TEST(conformance_distributed, the_data_blocks_file_is_finished_before_the_header
     EXPECT_TRUE(finished.empty());
 }
 
+TEST(conformance_distributed, progress_counts_the_data_of_the_data_blocks_file)
+{
+    // The pixels of the image and the vector: each block counts when it is written, and once more when its checksum or
+    // compressed size must be known before the index, which a sink of blocks that cannot rewrite requires.
+    constexpr std::uint64_t blocks = 24 + 8000;
+    struct expectation
+    {
+        bool encoded = false;
+        openxisf::test::sink_kind sink = openxisf::test::sink_kind::rewritable;
+        std::uint64_t total = 0;
+    };
+    const small_model model;
+    for (const expectation& entry :
+         {expectation{.total = blocks}, expectation{.sink = openxisf::test::sink_kind::append_only, .total = blocks},
+          expectation{.encoded = true, .total = blocks},
+          expectation{.encoded = true, .sink = openxisf::test::sink_kind::append_only, .total = 2 * blocks}}) {
+        openxisf::write_options options = basic_options();
+        if (entry.encoded) {
+            options.codec = openxisf::codec::lz4;
+            options.checksum = openxisf::checksum_algorithm::sha1;
+        }
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> calls;
+        options.progress = [&calls](std::uint64_t done, std::uint64_t total) {
+            calls.emplace_back(done, total);
+            return true;
+        };
+        (void)openxisf::test::written_distributed(model.writer(options), entry.sink);
+        ASSERT_FALSE(calls.empty());
+        EXPECT_EQ(calls.front(), std::make_pair(std::uint64_t{0}, entry.total));
+        EXPECT_EQ(calls.back(), std::make_pair(entry.total, entry.total));
+        EXPECT_TRUE(std::ranges::is_sorted(calls));
+    }
+}
+
 TEST(conformance_distributed, the_path_of_a_data_blocks_file_is_relative_and_ends_with_xisb)
 {
     const small_model model;
     const openxisf::writer output = model.writer();
     for (const std::string_view path :
          {"", "unit.xisf", "unit", "/data/unit.xisb", "../unit.xisb", "./unit.xisb", "blocks//unit.xisb",
-          "blocks/./unit.xisb", "blocks/", R"(blocks\unit.xisb)", "unit\n.xisb", "unit\x7F.xisb"}) {
+          "blocks/./unit.xisb", "blocks/", R"(blocks\unit.xisb)", "unit\n.xisb", "unit\x7F.xisb",
+          // U+FFFE and U+FFFF, which XML cannot hold.
+          "unit\xEF\xBF\xBE.xisb", "unit\xEF\xBF\xBF.xisb"}) {
         openxisf::memory_sink header;
         openxisf::memory_sink blocks;
         EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument, [&] {
@@ -686,6 +820,15 @@ TEST(conformance_distributed, the_path_of_a_data_blocks_file_is_relative_and_end
                                               [&] { output.save_distributed(header, blocks, "\xFF.xisb"); }));
     EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
                                               [&] { output.save_distributed(header, header, "unit.xisb"); }));
+    // Each sink receives one file, from its start.
+    openxisf::memory_sink used;
+    used.write(openxisf::test::bytes("x"));
+    EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
+                                              [&] { output.save_distributed(used, blocks, "unit.xisb"); }));
+    EXPECT_TRUE(throws<openxisf::usage_error>(errc::invalid_argument,
+                                              [&] { output.save_distributed(header, used, "unit.xisb"); }));
+    EXPECT_EQ(header.position() + blocks.position(), 0U);
+    EXPECT_EQ(used.position(), 1U);
 
     for (const std::string_view path : {"blocks/unit.xisb", "UNIT.XISB", "a unit (1).xisb",
                                         "\xC3\x91"
@@ -741,19 +884,47 @@ TEST(conformance_distributed, a_cancelled_or_invalid_save_leaves_the_files_as_th
 {
     const openxisf::test::temp_directory directory;
     const std::string path = directory.file("unit.xish");
+    const std::filesystem::path blocks_path = openxisf::test::path_of(directory.file("unit.xisb"));
+    const small_model model;
     openxisf::write_options options = basic_options();
-    options.progress = [](std::uint64_t /*done*/, std::uint64_t /*total*/) { return false; };
-    EXPECT_THROW(small_model().writer(options).save_distributed(path), openxisf::cancelled_error);
-    EXPECT_EQ(directory.entries(), 0U);
-    EXPECT_THROW(small_model().writer({}).save_distributed(path), openxisf::validation_error);
+    options.codec = openxisf::codec::zstd;
+
+    // The calls of the progress function in a save, elsewhere.
+    std::uint64_t calls = 0;
+    options.progress = [&calls](std::uint64_t /*done*/, std::uint64_t /*total*/) {
+        ++calls;
+        return true;
+    };
+    {
+        const openxisf::test::temp_directory elsewhere;
+        model.writer(options).save_distributed(elsewhere.file("unit.xish"));
+    }
+    ASSERT_GT(calls, 2U);
+    const auto cancelled_at = [&options](std::uint64_t stop) {
+        options.progress = [stop, count = std::uint64_t{0}](std::uint64_t /*done*/, std::uint64_t /*total*/) mutable {
+            return ++count < stop;
+        };
+        return options;
+    };
+
+    // Cancelled at any call, or invalid, a first save leaves neither file.
+    for (std::uint64_t stop = 1; stop <= calls; ++stop) {
+        EXPECT_THROW(model.writer(cancelled_at(stop)).save_distributed(path), openxisf::cancelled_error) << stop;
+        EXPECT_EQ(directory.entries(), 0U) << stop;
+    }
+    EXPECT_THROW(model.writer({}).save_distributed(path), openxisf::validation_error);
     EXPECT_EQ(directory.entries(), 0U);
 
-    small_model().writer().save_distributed(path);
+    // A save over existing files leaves both as they were.
+    model.writer().save_distributed(path);
     const std::string header = openxisf::test::read_file(openxisf::test::path_of(path));
-    options.progress = [calls = 0](std::uint64_t /*done*/, std::uint64_t /*total*/) mutable { return ++calls < 2; };
-    EXPECT_THROW(small_model().writer(options).save_distributed(path), openxisf::cancelled_error);
-    EXPECT_EQ(openxisf::test::read_file(openxisf::test::path_of(path)), header);
-    EXPECT_EQ(directory.entries(), 2U);
+    const std::string blocks = openxisf::test::read_file(blocks_path);
+    for (std::uint64_t stop = 1; stop <= calls; ++stop) {
+        EXPECT_THROW(model.writer(cancelled_at(stop)).save_distributed(path), openxisf::cancelled_error) << stop;
+        EXPECT_EQ(openxisf::test::read_file(openxisf::test::path_of(path)), header) << stop;
+        EXPECT_EQ(openxisf::test::read_file(blocks_path), blocks) << stop;
+        EXPECT_EQ(directory.entries(), 2U) << stop;
+    }
 }
 
 } // namespace

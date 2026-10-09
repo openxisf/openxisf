@@ -5,6 +5,7 @@
 
 #include <openxisf/error.h>
 
+#include "core/hex.h"
 #include "core/quote.h"
 #include "core/text_grammar.h"
 
@@ -16,7 +17,6 @@ namespace openxisf::detail {
 namespace {
 
 constexpr std::string_view base64_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-constexpr std::string_view hex_digits = "0123456789abcdef";
 constexpr unsigned invalid_digit = 64;
 
 // The value of a Base64 digit, or invalid_digit.
@@ -43,13 +43,8 @@ unsigned base64_value(char c) noexcept
 // The value of a lowercase hexadecimal digit, or invalid_digit.
 unsigned hex_value(char c) noexcept
 {
-    if (c >= '0' && c <= '9') {
-        return static_cast<unsigned>(c - '0');
-    }
-    if (c >= 'a' && c <= 'f') {
-        return static_cast<unsigned>(c - 'a') + 10U;
-    }
-    return invalid_digit;
+    const unsigned value = hex_digit_value(c);
+    return value == 16 || (c >= 'A' && c <= 'F') ? invalid_digit : value;
 }
 
 [[noreturn]] void throw_invalid_base64(std::string_view reason)

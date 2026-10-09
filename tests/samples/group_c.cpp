@@ -131,7 +131,7 @@ TEST(samples_c6, the_checksum_of_a_compressed_block_covers_the_stored_bytes)
     EXPECT_EQ(stored[3], std::byte{0xFD});
 }
 
-TEST(samples_c6, a_change_in_a_compressed_image_fails_its_checksum_before_decompression)
+TEST(samples_c6, a_change_in_an_embedded_compressed_block_fails_its_checksum)
 {
     std::vector<std::byte> file = read_sample(sample_by_id("C6"));
     change_digit(file[inside_first_data_element(file)]);

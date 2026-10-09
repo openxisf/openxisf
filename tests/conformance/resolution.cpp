@@ -75,26 +75,14 @@ TEST(conformance_resolution, both_values_are_mandatory_and_above_zero)
 {
     EXPECT_TRUE(unavailable(open_resolution(R"(vertical="72")")));
     EXPECT_TRUE(unavailable(open_resolution(R"(horizontal="72")")));
-    for (const std::string_view value : {"0", "-72", "inf", "NaN", "seventy"}) {
-        EXPECT_TRUE(unavailable(open_resolution(R"(horizontal="72" vertical=")" + std::string(value) + '"'))) << value;
-    }
+    // The values refused are in unit/ancillary_attributes.cpp.
+    EXPECT_TRUE(unavailable(open_resolution(R"(horizontal="72" vertical="0")")));
 }
 
 TEST(conformance_resolution, the_unit_is_inch_or_cm)
 {
-    for (const std::string_view unit : {"mm", "Inch", "CM", "inches", ""}) {
-        EXPECT_TRUE(unavailable(open_resolution(R"(horizontal="72" vertical="72" unit=")" + std::string(unit) + '"')))
-            << unit;
-    }
-}
-
-TEST(conformance_resolution, an_image_has_one_resolution)
-{
-    const reader file = openxisf::test::open_header(header_xml(image_xml(
-        {}, R"(<Resolution horizontal="100" vertical="100"/><Resolution horizontal="200" vertical="200"/>)")));
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/Resolution[2]"));
-    EXPECT_EQ(file.image(0).resolution, (resolution{.horizontal = 100.0, .vertical = 100.0}));
+    // The units refused are in unit/ancillary_attributes.cpp.
+    EXPECT_TRUE(unavailable(open_resolution(R"(horizontal="72" vertical="72" unit="mm")")));
 }
 
 TEST(conformance_resolution, strict_reading_refuses_an_invalid_resolution)

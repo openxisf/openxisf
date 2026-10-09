@@ -27,6 +27,8 @@ struct element_properties
     std::size_t element = no_element;
     std::string path{};
     property_list properties{};
+    /// The identifiers of the properties whose values are left in their data blocks (value_reader::defers()).
+    std::vector<std::string> deferred_ids{};
 };
 
 /// The properties of a unit.
@@ -36,6 +38,8 @@ struct unit_properties
     property_list metadata{};
     /// The standalone properties: the Property elements of the root element (spec §11.1).
     property_list standalone{};
+    /// The identifiers of the standalone properties whose values are left in their data blocks.
+    std::vector<std::string> standalone_deferred_ids{};
     /// The properties of each Image and Thumbnail element, in document order.
     std::vector<element_properties> objects{};
 };
@@ -43,7 +47,10 @@ struct unit_properties
 /// Reads every Property element of outline, its value with values, and gives each object the properties that it
 /// contains and those that its Reference elements name (spec §11.1). A property of several objects is copied into each
 /// but the last, and each copy counts against budget by its held_size(), so that References cannot multiply the memory
-/// that a unit takes. Every problem is recorded in log, and a property that cannot be read is unavailable:
+/// that a unit takes. A property whose value values leaves in its data block, in a header-only open, is not read, but
+/// its identifier is the identifier of a property of each object, as it will be once the value is loaded: another
+/// property with that identifier is refused, and a mandatory metadata property is not missing. Every problem is
+/// recorded in log, and a property that cannot be read is unavailable:
 /// - a Property element without an id or a type attribute, a type that the specification does not define, a value that
 ///   cannot be read (value_reader::read()), or a copy beyond the budget are errors, and so is a second property with
 ///   the identifier of another of the same object;

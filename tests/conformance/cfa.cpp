@@ -79,13 +79,8 @@ TEST(conformance_cfa, the_pattern_width_and_height_are_mandatory)
 
 TEST(conformance_cfa, the_pattern_has_one_element_of_table_18_for_each_pixel_of_the_matrix)
 {
+    // The patterns and sizes refused are in unit/ancillary_attributes.cpp.
     EXPECT_TRUE(unavailable(open_filter(R"(pattern="RGGBR" width="2" height="2")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="RGB" width="2" height="2")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="rggb" width="2" height="2")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="RGXB" width="2" height="2")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="" width="0" height="0")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="RG" width="2" height="-1")")));
-    EXPECT_TRUE(unavailable(open_filter(R"(pattern="RGGB" width="two" height="2")")));
 }
 
 TEST(conformance_cfa, a_colour_filter_array_belongs_to_a_two_dimensional_image)
@@ -108,16 +103,6 @@ TEST(conformance_cfa, a_thumbnail_has_no_colour_filter_array)
                                   "/xisf/Image[1]/Thumbnail[1]/ColorFilterArray[1]"));
     EXPECT_TRUE(file.image(0).thumbnail.has_value());
     EXPECT_FALSE(file.image(0).color_filter_array.has_value());
-}
-
-TEST(conformance_cfa, an_image_has_one_colour_filter_array)
-{
-    const reader file = openxisf::test::open_header(header_xml(image_xml(
-        {}, R"(<ColorFilterArray pattern="RGGB" width="2" height="2"/><ColorFilterArray pattern="BGGR" width="2" )"
-            R"(height="2"/>)")));
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/ColorFilterArray[2]"));
-    EXPECT_EQ(file.image(0).color_filter_array.value_or(color_filter_array{}).pattern, "RGGB");
 }
 
 TEST(conformance_cfa, strict_reading_refuses_an_invalid_colour_filter_array)

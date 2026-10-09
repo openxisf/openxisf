@@ -60,10 +60,27 @@ TEST(conformance_fits_keyword, an_image_has_its_keywords_in_order)
 TEST(conformance_fits_keyword, values_and_comments_are_kept_as_written)
 {
     // Padding of values is optional (spec §11.6.1), so it is kept, like any other text of a keyword.
-    const reader file = open_keyword(R"(name="OBSERVER" value="'Ñandú   '" comment="  spaces kept ")");
+    const reader file = open_keyword(R"(name="OBSERVER" value="'Nandu   '" comment="  spaces kept ")");
     EXPECT_TRUE(no_diagnostics(file.diagnostics()));
     EXPECT_EQ(file.image(0).fits_keywords,
-              (std::vector<fits_keyword>{{.name = "OBSERVER", .value = "'Ñandú   '", .comment = "  spaces kept "}}));
+              (std::vector<fits_keyword>{{.name = "OBSERVER", .value = "'Nandu   '", .comment = "  spaces kept "}}));
+}
+
+TEST(conformance_fits_keyword, text_outside_printable_ascii_is_kept_with_a_warning)
+{
+    // FITS 4.0 §4.1.1: a header holds printable ASCII, which the writer requires; capture software writes degree signs.
+    const reader file = open_keyword(R"(name="CCD-TEMP" value="-10&#9;" comment="Sensor temperature in °C")");
+    ASSERT_EQ(file.diagnostics().size(), 2U) << openxisf::test::describe(file.diagnostics());
+    for (const openxisf::diagnostic& entry : file.diagnostics()) {
+        EXPECT_EQ(entry.severity, severity::warning);
+        EXPECT_EQ(entry.code, errc::invalid_fits_keyword);
+        EXPECT_EQ(entry.context.element, "/xisf/Image[1]/FITSKeyword[1]");
+    }
+    EXPECT_EQ(file.diagnostics()[0].context.attribute, "value");
+    EXPECT_EQ(file.diagnostics()[1].context.attribute, "comment");
+    EXPECT_EQ(
+        file.image(0).fits_keywords,
+        (std::vector<fits_keyword>{{.name = "CCD-TEMP", .value = "-10\t", .comment = "Sensor temperature in °C"}}));
 }
 
 TEST(conformance_fits_keyword, a_keyword_without_a_name_is_unavailable)
@@ -83,23 +100,33 @@ TEST(conformance_fits_keyword, a_keyword_without_a_name_is_unavailable)
 
 TEST(conformance_fits_keyword, a_name_outside_the_fits_grammar_is_kept_with_a_warning)
 {
-    // FITS 4.0: at most eight upper-case letters, digits, hyphens and underscores; no padding in XISF.
-    for (const std::string_view name : {"object", "OBJECT ", " OBJECT", "LONGNAME9", "DATE.OBS"}) {
-        const reader file = open_keyword(R"(name=")" + std::string(name) + R"(" value="1" comment="")");
-        EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_fits_keyword,
-                                      "/xisf/Image[1]/FITSKeyword[1]"))
-            << name;
-        ASSERT_EQ(file.image(0).fits_keywords.size(), 1U) << name;
-        EXPECT_EQ(file.image(0).fits_keywords[0].name, name);
-    }
+    // FITS 4.0: at most eight upper-case letters, digits, hyphens and underscores; no padding in XISF. The names
+    // outside the grammar are in unit/ancillary_attributes.cpp.
+    const reader file = open_keyword(R"(name="object" value="1" comment="")");
+    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_fits_keyword,
+                                  "/xisf/Image[1]/FITSKeyword[1]"));
+    ASSERT_EQ(file.image(0).fits_keywords.size(), 1U);
+    EXPECT_EQ(file.image(0).fits_keywords[0].name, "object");
 }
 
-TEST(conformance_fits_keyword, the_blank_keyword_has_an_empty_name)
+TEST(conformance_fits_keyword, the_blank_keyword_is_kept_with_a_warning)
 {
+    // FITS has a blank keyword, whose name is empty without its padding, but the XML schema of XISF requires a name of
+    // one to eight characters.
     const reader file = open_keyword(R"(name="" value="" comment="commentary text")");
-    EXPECT_TRUE(no_diagnostics(file.diagnostics()));
+    ASSERT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_fits_keyword,
+                                  "/xisf/Image[1]/FITSKeyword[1]"));
+    EXPECT_EQ(file.diagnostics()[0].context.attribute, "name");
     EXPECT_EQ(file.image(0).fits_keywords,
               (std::vector<fits_keyword>{{.name = "", .value = "", .comment = "commentary text"}}));
+
+    // Like COMMENT and HISTORY, it has no value.
+    const reader valued = open_keyword(R"(name="" value="text" comment="")");
+    ASSERT_EQ(valued.diagnostics().size(), 2U) << openxisf::test::describe(valued.diagnostics());
+    EXPECT_EQ(valued.diagnostics()[0].context.attribute, "name");
+    EXPECT_EQ(valued.diagnostics()[1].code, errc::invalid_fits_keyword);
+    EXPECT_EQ(valued.diagnostics()[1].context.attribute, "value");
+    EXPECT_EQ(valued.image(0).fits_keywords.at(0).value, "text");
 }
 
 TEST(conformance_fits_keyword, a_missing_value_or_comment_reads_as_empty_with_a_warning)
@@ -122,7 +149,7 @@ TEST(conformance_fits_keyword, a_missing_value_or_comment_reads_as_empty_with_a_
 TEST(conformance_fits_keyword, history_and_comment_keywords_have_an_empty_value)
 {
     // Spec §11.6.1: the value attribute of HISTORY and COMMENT is an empty string. Another value is kept.
-    for (const std::string_view name : {"HISTORY", "COMMENT", ""}) {
+    for (const std::string_view name : {"HISTORY", "COMMENT"}) {
         const reader file = open_keyword(R"(name=")" + std::string(name) + R"(" value="text" comment="")");
         EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_fits_keyword,
                                       "/xisf/Image[1]/FITSKeyword[1]"))

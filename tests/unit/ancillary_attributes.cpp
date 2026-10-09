@@ -8,14 +8,18 @@
 #include <openxisf/error.h>
 #include <openxisf/image.h>
 
+#include "support/bytes.h"
 #include "support/throws.h"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -47,6 +51,31 @@ TEST(ancillary_attributes, comment_history_and_blank_keywords_have_no_value)
     EXPECT_TRUE(detail::is_commentary_keyword(""));
     EXPECT_FALSE(detail::is_commentary_keyword("comment"));
     EXPECT_FALSE(detail::is_commentary_keyword("OBJECT"));
+}
+
+TEST(ancillary_attributes, fits_keyword_text_is_printable_ascii)
+{
+    // FITS 4.0 §4.1.1: from the space to the tilde.
+    for (const std::string_view text : {"", " ", "~", "'M 31'", "300.0 / [s]"}) {
+        EXPECT_TRUE(detail::is_fits_keyword_text(text)) << text;
+    }
+    // Control characters, DEL, and the bytes of UTF-8, such as those of the degree sign.
+    for (const std::string_view text : {"\t", "a\nb", "\x1F", "\x7F", "-10 \xC2\xB0"}) {
+        EXPECT_FALSE(detail::is_fits_keyword_text(text)) << text;
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------
+// ICC profiles (spec §11.7)
+
+TEST(ancillary_attributes, an_icc_profile_starts_with_a_header_of_128_bytes_with_its_signature)
+{
+    std::vector<std::byte> profile = openxisf::test::icc_profile(128);
+    EXPECT_TRUE(detail::has_icc_profile_header(profile));
+    EXPECT_FALSE(detail::has_icc_profile_header(std::span<const std::byte>(profile).first(127)));
+    EXPECT_FALSE(detail::has_icc_profile_header({}));
+    profile[39] = std::byte{'P'};
+    EXPECT_FALSE(detail::has_icc_profile_header(profile));
 }
 
 // -----------------------------------------------------------------------------------------------------------------

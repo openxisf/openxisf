@@ -43,11 +43,15 @@ struct adaptive_display_options
 /// Computes the display function of an image with the adaptive algorithm of spec §8.5.7, from the median and the
 /// normalized median absolute deviation (equation [10]) of each nominal channel of its pixel data.
 ///
-/// image describes the data: a Gray or RGB image of a real sample format, with a representable range, in its pixel
-/// storage model. Samples are mapped from the representable range to [0, 1] (equation [4]) before the statistics,
-/// NaN samples are left out, and the median of an even number of samples is the mean of the two middle ones. The
-/// parameters of the components that the image does not have, the lightness among them, are those of the identity, and
-/// so are those of a channel without samples other than NaN. The algorithm copies one channel at a time.
+/// image describes the data: a Gray or RGB image of a real sample format, with a representable range of finite bounds
+/// in increasing order and of finite width, in its pixel storage model. Samples are mapped from the representable range
+/// to [0, 1] (equation [4]) before the statistics, NaN samples are left out, and the median of an even number of
+/// samples is the mean of the two middle ones. The parameters of the components that the image does not have, the
+/// lightness among them, are those of the identity, and so are those of a channel without samples other than NaN,
+/// unless the parameters are linked: such a channel then takes no part in them and gets them as the others do, and the
+/// identity is left only to an image whose channels all hold NaN alone. A channel whose median and deviation are 0,
+/// such as a black one, gets the midtones balance 0 of equation [14], which takes every sample above 0 to 1. The
+/// algorithm copies one channel at a time.
 /// @throws usage_error when image is not such an image, pixels does not have image.data_size() bytes, or the options
 ///         are out of range.
 [[nodiscard]] OPENXISF_API display_function adaptive_display_function(std::span<const std::byte> pixels,

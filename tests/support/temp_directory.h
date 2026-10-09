@@ -46,4 +46,18 @@ private:
     std::filesystem::path path_;
 };
 
+/// Makes a directory the working directory of the process while it exists.
+class working_directory
+{
+public:
+    explicit working_directory(const std::filesystem::path& path);
+    ~working_directory();
+
+    working_directory(const working_directory&) = delete;
+    working_directory& operator=(const working_directory&) = delete;
+
+private:
+    std::filesystem::path previous_;
+};
+
 } // namespace openxisf::test

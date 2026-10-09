@@ -106,12 +106,20 @@ constexpr bool types_in_order() noexcept
 }
 static_assert(types_in_order());
 
+// The entry of a type, or one without a name for a value outside the enumeration.
 const type_entry& entry_of(property_type type) noexcept
 {
-    return types[static_cast<std::size_t>(type)];
+    static constexpr type_entry none{};
+    const auto index = static_cast<std::size_t>(type);
+    return index < types.size() ? types[index] : none;
 }
 
 } // namespace
+
+bool is_property_type(property_type type) noexcept
+{
+    return static_cast<std::size_t>(type) < types.size();
+}
 
 type_category category_of(property_type type) noexcept
 {

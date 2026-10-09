@@ -64,7 +64,9 @@ struct complex128
 [[nodiscard]] OPENXISF_API double to_double(float128 value) noexcept;
 
 /// An instant in UTC: the value of a TimePoint property (spec §8.4.4.4). A TimePoint written with a UTC offset is read
-/// as the same instant in UTC; a fraction of a second beyond nanoseconds is truncated.
+/// as the same instant in UTC; a fraction of a second beyond nanoseconds is truncated. The instant of a TimePoint near
+/// the ends of its years, 0000 to 9999, can fall in year -1 or 10000 in UTC, as that of 9999-12-31T23:30:00-01:00
+/// does; the writer, which writes TimePoints in UTC, refuses such an instant (errc::invalid_time_point).
 struct date_time
 {
     int year = 1970;
@@ -140,7 +142,8 @@ enum class property_type : std::uint8_t
     c128_matrix,
 };
 
-/// The name of a property type in the specification, such as "Float32" or "UI16Vector".
+/// The name of a property type in the specification, such as "Float32" or "UI16Vector"; empty for a value that is no
+/// enumerator of property_type.
 [[nodiscard]] OPENXISF_API std::string_view property_type_name(property_type type) noexcept;
 
 /// Alignment of padded representations (spec §8.4.3).
@@ -246,15 +249,15 @@ public:
 
     property_value() = default;
 
-    property_value(bool value);
-    property_value(std::int8_t value);
-    property_value(std::uint8_t value);
-    property_value(std::int16_t value);
-    property_value(std::uint16_t value);
-    property_value(std::int32_t value);
-    property_value(std::uint32_t value);
-    property_value(std::int64_t value);
-    property_value(std::uint64_t value);
+    property_value(bool value) noexcept;
+    property_value(std::int8_t value) noexcept;
+    property_value(std::uint8_t value) noexcept;
+    property_value(std::int16_t value) noexcept;
+    property_value(std::uint16_t value) noexcept;
+    property_value(std::int32_t value) noexcept;
+    property_value(std::uint32_t value) noexcept;
+    property_value(std::int64_t value) noexcept;
+    property_value(std::uint64_t value) noexcept;
 
     /// An integer of another C++ type, such as long long where std::int64_t is long: the integer type of its width and
     /// signedness.
@@ -262,27 +265,27 @@ public:
         requires std::integral<T> && (!std::same_as<T, bool>) && (!std::same_as<T, char>) &&
                  (!std::same_as<T, wchar_t>) && (!std::same_as<T, char8_t>) && (!std::same_as<T, char16_t>) &&
                  (!std::same_as<T, char32_t>)
-    property_value(T value) : property_value(fixed_width(value))
+    property_value(T value) noexcept : property_value(fixed_width(value))
     {}
 
-    property_value(int128 value);
-    property_value(uint128 value);
-    property_value(float value);
-    property_value(double value);
-    property_value(std::complex<float> value);
-    property_value(std::complex<double> value);
+    property_value(int128 value) noexcept;
+    property_value(uint128 value) noexcept;
+    property_value(float value) noexcept;
+    property_value(double value) noexcept;
+    property_value(std::complex<float> value) noexcept;
+    property_value(std::complex<double> value) noexcept;
 
     /// A String value. The text must be valid UTF-8 without U+0000 when the value is written.
-    property_value(std::string value);
+    property_value(std::string value) noexcept;
     property_value(std::string_view value);
     property_value(const char* value);
     property_value(std::nullptr_t) = delete;
 
-    property_value(date_time value);
+    property_value(date_time value) noexcept;
 
     /// A vector value.
     template <property_element T>
-    property_value(std::vector<T> elements)
+    property_value(std::vector<T> elements) noexcept
         : type_(vector_type<T>()), value_(std::in_place_type<std::vector<T>>, std::move(elements))
     {}
 
@@ -299,13 +302,15 @@ public:
         return result;
     }
 
-    /// A Float128 scalar, kept as text: a floating point value of spec §8.3.3 within the range of Float128.
+    /// A Float128 scalar, kept as text: a floating point value of spec §8.3.3 within the range of Float128, without the
+    /// white space around it, which encoders do not write (spec §8.3.5).
     /// @throws usage_error when text is not such a value.
-    [[nodiscard]] static property_value from_float128_text(std::string text);
+    [[nodiscard]] static property_value from_float128_text(std::string_view text);
 
-    /// A Complex128 scalar, kept as text: (real,imag), with Float128 parts.
+    /// A Complex128 scalar, kept as text: (real,imag), with Float128 parts, without the white space around the value
+    /// and its parts.
     /// @throws usage_error when text is not such a value.
-    [[nodiscard]] static property_value from_complex128_text(std::string text);
+    [[nodiscard]] static property_value from_complex128_text(std::string_view text);
 
     /// The property type of the value.
     [[nodiscard]] property_type type() const noexcept

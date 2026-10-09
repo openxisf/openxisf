@@ -95,8 +95,14 @@ struct placed_bytes
     std::vector<std::byte> data{};
 };
 
-/// A data blocks file of size bytes, zeros but for the signature, the reserved field, each node at its position and
-/// each of blocks at its position. size grows to hold them when it is smaller.
+/// The parts of a data blocks file: the signature, the reserved field, each node at its position and each of blocks at
+/// its position.
+[[nodiscard]] std::vector<placed_bytes> blocks_file_parts(const std::vector<index_node>& nodes,
+                                                          const std::vector<placed_bytes>& blocks = {},
+                                                          std::uint64_t reserved = 0);
+
+/// A data blocks file of size bytes, zeros but for its parts (blocks_file_parts()). size grows to hold them when it is
+/// smaller.
 [[nodiscard]] std::vector<std::byte> blocks_file(const std::vector<index_node>& nodes,
                                                  const std::vector<placed_bytes>& blocks = {}, std::uint64_t size = 0,
                                                  std::uint64_t reserved = 0);

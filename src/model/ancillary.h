@@ -40,9 +40,10 @@ struct ancillary_elements
 ///   (load_block()); an RGBWorkingSpace, DisplayFunction, ColorFilterArray or Resolution element without one of its
 ///   mandatory attributes, with a value that cannot be read, or whose values break the rules of its section of the
 ///   specification are errors;
-/// - a keyword name outside the grammar of FITS, a missing value or comment attribute of a keyword, a value of a
-///   COMMENT or HISTORY keyword, and luminance coefficients that differ from those that the chromaticities give by
-///   more than luminance_tolerance are warnings, and the element is read as written.
+/// - a keyword name outside the grammar of FITS, a missing value or comment attribute of a keyword, a value or comment
+///   that is not printable ASCII, a value of a COMMENT or HISTORY keyword, a profile that does not start with the
+///   header of an ICC profile, and luminance coefficients that differ from those that the chromaticities give by more
+///   than luminance_tolerance are warnings, and the element is read as written.
 [[nodiscard]] ancillary_elements read_ancillary(const unit_outline& outline, const std::vector<data_block>& blocks,
                                                 const thread_safe_source& source, const limits& limits,
                                                 ancillary_budget& budget, bool load_blocks, diagnostic_log& log);

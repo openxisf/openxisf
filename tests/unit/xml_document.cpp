@@ -13,8 +13,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -25,6 +27,7 @@ using openxisf::limit_error;
 using openxisf::detail::element_length;
 using openxisf::detail::is_xml_white_space;
 using openxisf::detail::parse_xml;
+using openxisf::detail::tag_end;
 using openxisf::test::throws;
 
 std::unique_ptr<pugi::xml_document> parse(std::string_view text, const openxisf::limits& limits = {})
@@ -119,14 +122,76 @@ TEST(xml_document, refuses_character_references_to_what_xml_does_not_allow)
           "<a>&#99999999999999999999;</a>"}) {
         EXPECT_TRUE(refuses(errc::invalid_xml, text)) << text;
     }
+    // pugixml accepts '<' in attribute values, so what starts a comment, a CDATA section or a processing instruction
+    // there is part of the value, and hides no reference after it.
+    for (const std::string_view text :
+         {R"(<a b="<!--">x&#0;y</a>)", R"(<a b='<![CDATA['>&#0;</a>)", R"(<a b="<?">&#0;</a>)",
+          R"(<a b="<!--" c="&#0;"/>)", R"(<a b="'<!--'"><c d="&#0;"/></a>)"}) {
+        EXPECT_TRUE(refuses(errc::invalid_xml, text)) << text;
+    }
+    // pugixml reads the pseudo-attributes of an XML declaration, whose target is xml in any case, as attribute values.
+    for (const std::string_view text : {R"(<?xml version="1.0" encoding="&#0;ISO-8859-1"?><a/>)",
+                                        R"(<?XML version='1.0&#xD800;'?><a/>)", R"(<?xml?><a>&#0;</a>)"}) {
+        EXPECT_TRUE(refuses(errc::invalid_xml, text)) << text;
+    }
     // The last code point and those around the surrogates are characters; references in comments, CDATA sections and
-    // processing instructions are text; and what pugixml does not read as a reference stays as written.
+    // processing instructions are text, whatever quotes and tags they hold; and what pugixml does not read as a
+    // reference stays as written.
     for (const std::string_view text :
          {"<a>&#x10FFFF;&#xD7FF;&#xE000;&#1;&#x9;</a>", "<a><!-- &#0; --></a>", "<a><![CDATA[&#0;]]></a>",
-          "<a><?pi &#0;?></a>", "<a>&#X0;</a>", "<a>&#;</a>", "<a>&#x;</a>", "<a>&#0</a>", "<a>&#0x1;</a>"}) {
+          "<a><?pi &#0;?></a>", R"(<a><!-- " <b c=' --><![CDATA[ " &#0; ]]><?pi ' &#0;?></a>)", "<a>&#X0;</a>",
+          "<a>&#;</a>", "<a>&#x;</a>", "<a>&#0</a>", "<a>&#0x1;</a>", "<a>&#fffffff;</a>",
+          "<?xml-stylesheet href='&#0;'?><a/>", "<?xml0 &#0;?><a/>"}) {
         EXPECT_NO_THROW((void)parse(text)) << text;
     }
     EXPECT_STREQ(parse("<a>&#x10FFFF;</a>")->document_element().child_value(), "\xF4\x8F\xBF\xBF");
+}
+
+TEST(xml_document, finds_the_first_character_that_xml_does_not_allow)
+{
+    using openxisf::detail::first_restricted_character;
+    const auto found = [](std::string_view text) {
+        const std::optional<openxisf::detail::restricted_character> first = first_restricted_character(text);
+        return first ? std::make_pair(first->offset, first->code_point) : std::make_pair(text.size(), std::uint32_t{});
+    };
+    // XML 1.0, Legal Character: control characters but tab, line feed and carriage return, U+FFFE and U+FFFF, written
+    // as they are anywhere, comments included.
+    EXPECT_EQ(found("<a>x\x01</a>"), std::make_pair(std::size_t{4}, std::uint32_t{1}));
+    EXPECT_EQ(found("<a b=\"\x1F\"/>"), std::make_pair(std::size_t{6}, std::uint32_t{0x1F}));
+    EXPECT_EQ(found("<a><!-- \x0B --></a>"), std::make_pair(std::size_t{8}, std::uint32_t{0x0B}));
+    EXPECT_EQ(found("<a>\xEF\xBF\xBE</a>"), std::make_pair(std::size_t{3}, std::uint32_t{0xFFFE}));
+    EXPECT_EQ(found("<a>\xEF\xBF\xBF</a>"), std::make_pair(std::size_t{3}, std::uint32_t{0xFFFF}));
+    // Or as character references, where pugixml reads them; the first in the text, whatever its form.
+    EXPECT_EQ(found("<a>&#1;</a>"), std::make_pair(std::size_t{3}, std::uint32_t{1}));
+    EXPECT_EQ(found(R"(<a b="&#x1f;"/>)"), std::make_pair(std::size_t{6}, std::uint32_t{0x1F}));
+    EXPECT_EQ(found("<a>&#xFFFF;\x02</a>"), std::make_pair(std::size_t{3}, std::uint32_t{0xFFFF}));
+    EXPECT_EQ(found("<a>\x02&#xFFFF;</a>"), std::make_pair(std::size_t{3}, std::uint32_t{2}));
+    EXPECT_EQ(found(R"(<?xml version="1.0" encoding="UTF-8&#1;"?><a/>)"),
+              std::make_pair(std::size_t{35}, std::uint32_t{1}));
+    // Characters that XML allows, and references in comments, CDATA sections and processing instructions, which are
+    // text.
+    const std::string_view allowed = "<a b=\"\t\">\r\n&#9;&#xA;&#13;\x7F\xC2\x80\xEF\xBF\xBD&#xFFFD;&#x10FFFF;"
+                                     "<!-- &#1; --><![CDATA[&#2;]]><?pi &#3;?></a>";
+    EXPECT_EQ(found(allowed), std::make_pair(allowed.size(), std::uint32_t{}));
+}
+
+TEST(xml_document, finds_character_data_outside_the_elements)
+{
+    using openxisf::detail::first_text_outside_elements;
+    // XML allows markup and white space alone at the top level (Document), and pugixml accepts the rest: text, entity
+    // references among it, and CDATA sections.
+    for (const std::string_view text : {"x<a/>", "<a/>x", "<?xml version=\"1.0\"?>\n x<a/>", "<a/><!-- c -->y<b/>",
+                                        "<a>t</a> &amp;", "<a/><![CDATA[ ]]>", "<?pi?>x<a/>"}) {
+        EXPECT_NO_THROW((void)parse(text)) << text;
+        EXPECT_TRUE(first_text_outside_elements(text).has_value()) << text;
+    }
+    EXPECT_EQ(first_text_outside_elements("<a/>\n\t x"), 7U);
+    EXPECT_EQ(first_text_outside_elements("<a/><![CDATA[x]]>"), 4U);
+    // White space, and what elements, comments and processing instructions hold, quotes and tags included.
+    for (const std::string_view text : {"<a>x</a>", " \r\n\t<a/>\n", "<a b='>x'>y<![CDATA[z]]></a><!-- x -->",
+                                        "<?xml version=\"1.0\"?>\n<?pi > x?>\n<a><b>y</b><c/></a>\n<d e=\"<f>\"/>"}) {
+        EXPECT_EQ(first_text_outside_elements(text), std::nullopt) << text;
+    }
 }
 
 TEST(xml_document, refuses_an_element_that_repeats_an_attribute)
@@ -185,6 +250,34 @@ TEST(xml_document, limits_the_number_of_elements)
                                     [] { (void)parse("<a><b/><c/></a><d/>", {.max_xml_elements = 3}); }));
 }
 
+TEST(xml_document, checks_the_limits_on_the_tags_before_it_builds_the_document)
+{
+    // The elements are counted from the tags of the text before pugixml builds a tree of them, which costs memory for
+    // each: text beyond a limit fails with the limit, also when it is not well-formed, which the parse would report.
+    EXPECT_TRUE(throws<limit_error>(errc::too_many_xml_elements,
+                                    [] { (void)parse("<a><b/><c/><d/>", {.max_xml_elements = 3}); }));
+    EXPECT_TRUE(throws<limit_error>(errc::xml_too_deep, [] { (void)parse("<a><b><c><d>", {.max_xml_depth = 3}); }));
+    EXPECT_TRUE(refuses(errc::invalid_xml, "<a><b/><c/>"));
+    try {
+        (void)parse("<a><b/><c/><d/>", {.max_xml_elements = 3});
+        FAIL() << "no exception";
+    } catch (const limit_error& failure) {
+        EXPECT_EQ(failure.context().offset, 11U); // The '<' of the element beyond the limit.
+    }
+
+    // Comments, CDATA sections, processing instructions, a declaration and a '>' in an attribute value are not tags;
+    // a self-closing tag and an end tag close their element.
+    EXPECT_NO_THROW((void)parse("<a><!-- <b/><c/> --><![CDATA[<d/>]]><?pi <e/> ?></a>", {.max_xml_elements = 1}));
+    EXPECT_NO_THROW((void)parse("<?xml version=\"1.0\"?><a/>", {.max_xml_elements = 1}));
+    EXPECT_NO_THROW((void)parse(R"(<a b="/>" c='>'><d/></a>)", {.max_xml_depth = 2, .max_xml_elements = 2}));
+    EXPECT_NO_THROW((void)parse("<a/><b/><c><d/></c>", {.max_xml_depth = 2}));
+    EXPECT_TRUE(
+        throws<limit_error>(errc::xml_too_deep, [] { (void)parse("<a/><b/><c><d/></c>", {.max_xml_depth = 1}); }));
+    // Text that is not XML at all is for the parse to refuse.
+    EXPECT_TRUE(refuses(errc::invalid_xml, "<<<<"));
+    EXPECT_TRUE(refuses(errc::invalid_xml, "<a><b"));
+}
+
 TEST(xml_document, zero_means_no_limit)
 {
     // Deep enough to exhaust the stack of any recursive walk.
@@ -218,9 +311,21 @@ TEST(xml_document, finds_the_end_of_an_element)
              example{.text = "<a><![CDATA[ > </a> ]]></a>tail", .start = 0, .element = "<a><![CDATA[ > </a> ]]></a>"},
              example{.text = "<a><?p /> </a>?></a>tail", .start = 0, .element = "<a><?p /> </a>?></a>"},
              example{.text = "<a>no end", .start = 0, .element = "<a>no end"},
+             // Text that is not well-formed: the tags nest without regard to their names.
+             example{.text = "<a><b></a></b>tail", .start = 0, .element = "<a><b></a></b>"},
+             example{.text = "</a>tail", .start = 0, .element = "</a>"},
+             example{.text = "<a b='>", .start = 0, .element = "<a b='>"},
          }) {
         EXPECT_EQ(e.text.substr(e.start, element_length(e.text, e.start)), e.element);
     }
+}
+
+TEST(xml_document, finds_the_end_of_a_tag)
+{
+    EXPECT_EQ(tag_end(R"(x<a b='>' c=">">y)", 1), 15U);
+    EXPECT_EQ(tag_end("<a/>", 0), 3U);
+    EXPECT_FALSE(tag_end("<a b='>", 0).has_value());
+    EXPECT_FALSE(tag_end("<a", 0).has_value());
 }
 
 } // namespace

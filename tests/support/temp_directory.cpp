@@ -5,13 +5,13 @@
 
 #include "core/xoshiro.h"
 
+#include <gtest/gtest.h>
+
 #if defined(_WIN32)
 #include <windows.h>
 #endif
 
 #include <cstdint>
-#include <cstdio>
-#include <exception>
 #include <stdexcept>
 #include <system_error>
 
@@ -106,15 +106,26 @@ temp_directory::temp_directory()
 
 temp_directory::~temp_directory()
 {
-    bool removed = false;
+    // A directory left behind fails the test. A destructor throws nothing, so a failure to remove the directory or to
+    // write the message is reported without one.
     try {
-        removed = remove_tree(path_);
-    } catch (const std::exception&) {
-        removed = false;
+        if (!remove_tree(path_)) {
+            ADD_FAILURE() << "the temporary directory " << utf8(path_) << " could not be removed";
+        }
+    } catch (...) {
+        ADD_FAILURE();
     }
-    if (!removed) {
-        (void)std::fputs("a test could not remove its temporary directory\n", stderr);
-    }
+}
+
+working_directory::working_directory(const std::filesystem::path& path) : previous_(std::filesystem::current_path())
+{
+    std::filesystem::current_path(path);
+}
+
+working_directory::~working_directory()
+{
+    std::error_code ignored;
+    std::filesystem::current_path(previous_, ignored);
 }
 
 std::string temp_directory::file(std::string_view name) const

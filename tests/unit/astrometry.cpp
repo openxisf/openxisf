@@ -347,6 +347,13 @@ TEST(astrometry, each_layer_is_available_when_its_properties_are_complete_and_co
          .properties = set(forward("Terms"), "Fallback"),
          .expected = third(inconsistent)},
         {.name = "terms that end with a newline", .properties = set(forward("Terms"), "Global\n"), .expected = all},
+        // A newline may be CR LF, as on Windows; any other character belongs to the identifier.
+        {.name = "terms on lines that end with CR LF",
+         .properties = set(forward("Terms"), "\r\nGlobal\r\n"),
+         .expected = all},
+        {.name = "a kind of term with a space after it",
+         .properties = set(forward("Terms"), "Global "),
+         .expected = third(unknown_identifier)},
         {.name = "no terms", .properties = set(forward("Terms"), ""), .expected = all},
         {.name = "no order", .properties = erase(forward("Order")), .expected = third(missing_property)},
         // Coefficients of the right length for the order, so that only the order makes the layer unavailable.
@@ -782,6 +789,29 @@ TEST(astrometry, linear_solutions_agree_with_wcslib)
         }
     }
     EXPECT_GT(compared, 600U);
+}
+
+TEST(astrometry, the_cylindrical_projections_take_longitudes_modulo_360_as_pixinsight_does)
+{
+    // PixInsight 1.9.5 with a linear solution of one degree per pixel about (0, 0) at (200, 150): the image point
+    // (10, 150), 190 degrees from the reference point, is at right ascension 190, which goes back to (370, 150). WCSLIB
+    // gives no coordinates more than 180 degrees from the reference point.
+    for (const char* system : {"PlateCarree", "Mercator"}) {
+        SCOPED_TRACE(system);
+        property_list properties;
+        properties.set(solution("Version"), "1.0");
+        properties.set(solution("ProjectionSystem"), system);
+        properties.set(solution("ReferenceCelestialCoordinates"), std::vector<double>{0.0, 0.0});
+        properties.set(solution("ReferenceImageCoordinates"), std::vector<double>{200.0, 150.0});
+        properties.set(solution("LinearTransformationMatrix"), matrix(2, 2, {-1.0, 0.0, 0.0, -1.0}));
+        const astrometric_solution solved(properties);
+        const celestial_point sky = value_of(solved.image_to_celestial({.x = 10.0, .y = 150.0}));
+        EXPECT_NEAR(sky.ra, 190.0, 1e-12);
+        EXPECT_NEAR(sky.dec, 0.0, 1e-12);
+        const image_point back = value_of(solved.celestial_to_image(sky));
+        EXPECT_NEAR(back.x, 370.0, 1e-10);
+        EXPECT_NEAR(back.y, 150.0, 1e-10);
+    }
 }
 
 // -----------------------------------------------------------------------------------------------------------------

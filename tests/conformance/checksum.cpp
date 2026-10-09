@@ -218,4 +218,28 @@ TEST(conformance_checksum, a_digest_in_uppercase_digits_is_accepted_with_a_warni
     EXPECT_EQ(stored_block(opened, "/xisf/Property[1]"), abc());
 }
 
+TEST(conformance_checksum, an_algorithm_name_in_another_case_is_accepted_with_a_warning)
+{
+    // Spec §10.5 names the algorithms in lowercase; another case names the same algorithm.
+    for (const std::string_view algorithm : {"SHA1", "Sha-1"}) {
+        const unit opened =
+            open_with_attachment(property("Value",
+                                          R"(location="inline:base64" checksum=")" + std::string(algorithm) +
+                                              R"(:a9993e364706816aba3e25717850c26c9cd0d89d")",
+                                          "YWJj"));
+        EXPECT_TRUE(
+            single_diagnostic(opened.diagnostics, severity::warning, errc::invalid_checksum, "/xisf/Property[1]"))
+            << algorithm;
+        EXPECT_EQ(stored_block(opened, "/xisf/Property[1]"), abc()) << algorithm;
+    }
+
+    // A name that is no algorithm in any case is reported as written, with no warning about its case or its digits.
+    const unit unknown = open_with_attachment(
+        property("Value", R"(location="inline:base64" checksum="MD5:900150983CD24FB0D6963F7D28E17F72")", "YWJj"));
+    ASSERT_TRUE(
+        single_diagnostic(unknown.diagnostics, severity::error, errc::unsupported_checksum, "/xisf/Property[1]"));
+    EXPECT_NE(unknown.diagnostics.front().message.find("'MD5'"), std::string::npos)
+        << unknown.diagnostics.front().message;
+}
+
 } // namespace

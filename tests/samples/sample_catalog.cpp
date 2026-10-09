@@ -517,6 +517,9 @@ const std::vector<sample>& catalog()
          .elements = group_c_elements(),
          .blocks = {"/xisf/Image[1]", "/xisf/Image[1]/Property[1]", "/xisf/Image[1]/Thumbnail[1]",
                     "/xisf/Metadata[1]/Property[8]"}},
+        // D6 and D7 do not exist: the XISF module of PixInsight has no format hint for normal storage,
+        // big-endian blocks or CIE L*a*b*, cannot write a complex image, and PixInsight cannot sign XISF units.
+        // Constructed units cover them (tests/conformance/image.cpp, byte_order.cpp and signature.cpp).
         {.id = "D1",
          .file = "d1-rich-rgb.xisf",
          .content = "The pattern image in RGB and UInt16 with what describes an image: six FITS keywords (HISTORY and "
@@ -666,7 +669,7 @@ std::vector<diagnostic> unexpected_diagnostics(std::span<const diagnostic> diagn
 {
     std::vector<diagnostic> others;
     for (const diagnostic& entry : diagnostics) {
-        if (entry.severity != severity::warning || entry.code != errc::reserved_property_type ||
+        if (entry.severity != severity::info || entry.code != errc::reserved_property_type ||
             entry.context.element != creation_time_path) {
             others.push_back(entry);
         }

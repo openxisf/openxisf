@@ -7,8 +7,16 @@
 
 namespace openxisf::detail {
 
-void throw_unit_error(errc code, std::string_view message, error_context context)
+void throw_unit_error(errc code, std::string_view message, error_context context, const error_origin& origin)
 {
+    switch (origin.raised) {
+    case error_origin::kind::io:
+        throw io_error(code, message, origin.system_code, std::move(context));
+    case error_origin::kind::unsupported:
+        throw unsupported_error(code, message, std::move(context));
+    case error_origin::kind::by_code:
+        break;
+    }
     switch (code) {
     case errc::checksum_mismatch:
     case errc::corrupt_compressed_data:
@@ -24,6 +32,9 @@ void throw_unit_error(errc code, std::string_view message, error_context context
     case errc::location_not_allowed:
     case errc::hash_failure:
         throw unsupported_error(code, message, std::move(context));
+    case errc::header_too_large:
+    case errc::xml_too_deep:
+    case errc::too_many_xml_elements:
     case errc::allocation_too_large:
     case errc::zstd_window_too_large:
     case errc::ancillary_data_too_large:
@@ -50,10 +61,10 @@ void diagnostic_log::warning(errc code, std::string message, error_context conte
     add(severity::warning, code, std::move(message), std::move(context));
 }
 
-void diagnostic_log::error(errc code, std::string message, error_context context)
+void diagnostic_log::error(errc code, std::string message, error_context context, const error_origin& origin)
 {
     if (strict_) {
-        throw_unit_error(code, message, std::move(context));
+        throw_unit_error(code, message, std::move(context), origin);
     }
     add(severity::error, code, std::move(message), std::move(context));
 }
