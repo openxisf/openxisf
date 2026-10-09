@@ -28,6 +28,11 @@ bool create_symbolic_link(const std::filesystem::path& target, const std::filesy
     } else {
         std::filesystem::create_symlink(target, link, error);
     }
+#if !defined(_WIN32)
+    if (error) {
+        throw std::system_error(error, "cannot create the symbolic link " + link.string());
+    }
+#endif
     return !error;
 }
 
@@ -36,8 +41,9 @@ void create_junction(const std::filesystem::path& target, const std::filesystem:
 {
     std::filesystem::create_directory(link);
     // The reparse data of a mount point, REPARSE_DATA_BUFFER of the driver kit: a header, then the target as an NT
-    // path, \??\C:\dir, and as it is printed, each with its terminating null.
-    const std::wstring printed = std::filesystem::absolute(target).native();
+    // path, \??\C:\dir, and as it is printed, each with its terminating null. An absolute target is kept as it is:
+    // std::filesystem::absolute() would drop a dot that ends one of its steps.
+    const std::wstring printed = (target.is_absolute() ? target : std::filesystem::absolute(target)).native();
     const std::wstring substitute = LR"(\??\)" + printed;
     const std::size_t substitute_size = substitute.size() * sizeof(wchar_t);
     const std::size_t printed_size = printed.size() * sizeof(wchar_t);

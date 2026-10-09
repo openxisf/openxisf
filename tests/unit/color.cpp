@@ -28,6 +28,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -109,6 +110,10 @@ TEST(color, chromaticities_without_a_solution_define_no_working_space)
     // A y coordinate of zero, and three equal primaries, whose system is singular.
     EXPECT_EQ(openxisf::luminance_coefficients({0.6, 0.3, 0.15}, {0.3, 0.6, 0.0}), std::nullopt);
     EXPECT_EQ(openxisf::luminance_coefficients({0.3, 0.3, 0.3}, {0.3, 0.3, 0.3}), std::nullopt);
+    // Two equal primaries, whose determinant is a residue of rounding where multiply-adds are fused, and three on the
+    // line x + y = 0.8, whose rounded elements leave one everywhere.
+    EXPECT_EQ(openxisf::luminance_coefficients({0.64, 0.64, 0.15}, {0.33, 0.33, 0.06}), std::nullopt);
+    EXPECT_EQ(openxisf::luminance_coefficients({0.2, 0.4, 0.6}, {0.6, 0.4, 0.2}), std::nullopt);
 }
 
 // -----------------------------------------------------------------------------------------------------------------
@@ -156,6 +161,8 @@ TEST(color, the_transformations_agree_with_an_independent_computation)
 
 TEST(color, white_becomes_the_reference_white_and_back)
 {
+    // The lightness of the reference white is exactly 1, as that of black is 0: 1.16 - 0.16 rounds below 1.
+    EXPECT_EQ(openxisf::xyz_to_lab({0.96422, 1.0, 0.82521}), (color_components{1.0, 0.5, 0.5}));
     // Annex B.1: M takes the linear RGB white point (1, 1, 1) to D50, for every working space.
     for (const auto& [name, space] : reference_spaces()) {
         SCOPED_TRACE(name);
@@ -176,6 +183,11 @@ TEST(color, the_srgb_functions_have_a_linear_part)
     EXPECT_DOUBLE_EQ(srgb.linearize(0.5), std::pow((0.5 + 0.055) / 1.055, 2.4));
     EXPECT_DOUBLE_EQ(srgb.delinearize(0.0031308), 12.92 * 0.0031308);
     EXPECT_DOUBLE_EQ(srgb.delinearize(0.5), (1.055 * std::pow(0.5, 1.0 / 2.4)) - 0.055);
+    // Black and white keep their values exactly, as they do with a gamma.
+    EXPECT_EQ(srgb.linearize(0.0), 0.0);
+    EXPECT_EQ(srgb.delinearize(0.0), 0.0);
+    EXPECT_EQ(srgb.linearize(1.0), 1.0);
+    EXPECT_EQ(srgb.delinearize(1.0), 1.0);
     // Each is the inverse of the other.
     for (const double value : {0.0, 0.001, 0.04, 0.0405, 0.3, 0.9, 1.0}) {
         EXPECT_NEAR(srgb.delinearize(srgb.linearize(value)), value, 1e-15) << value;
@@ -367,6 +379,67 @@ TEST(color, pixel_data_use_the_working_space_bounds_and_storage_of_the_image)
     }
 }
 
+// A component in [0, 1] as a sample of type T: through the representable range of an integer type, whose largest value
+// is white, or as it is.
+template <typename T> T sample_of(double component)
+{
+    if constexpr (std::is_floating_point_v<T>) {
+        return static_cast<T>(component);
+    } else {
+        constexpr auto largest = std::numeric_limits<T>::max();
+        return component >= 1.0 ? largest : static_cast<T>(std::round(component * static_cast<double>(largest)));
+    }
+}
+
+// The component that a sample of type T stands for, as the conversion reads it.
+template <typename T> double component_of(T sample)
+{
+    if constexpr (std::is_floating_point_v<T>) {
+        return static_cast<double>(sample);
+    } else {
+        return static_cast<double>(sample) / static_cast<double>(std::numeric_limits<T>::max());
+    }
+}
+
+TEST(color, pixel_data_of_the_other_real_formats_go_to_cie_lab_and_back)
+{
+    // UInt32, UInt64 and Float32, beside the UInt8, UInt16 and Float64 of the tests above; normal storage. The
+    // tolerances are the precision of each format, with room for the rounding of the conversion.
+    const color_converter srgb;
+    const std::array<color_components, 2> rgb{{{1.0, 0.25, 0.0}, {0.2, 0.4, 0.6}}};
+    const auto check = [&]<typename T>(std::type_identity<T>, openxisf::sample_format format, double tolerance) {
+        SCOPED_TRACE(std::string(openxisf::sample_format_name(format)));
+        image_info image = lab_image(format, 3, openxisf::pixel_storage::normal);
+        if constexpr (std::is_floating_point_v<T>) {
+            image.bounds = openxisf::bounds{.lower = 0.0, .upper = 1.0};
+        }
+        std::vector<T> samples(6);
+        for (std::size_t i = 0; i < 6; ++i) {
+            samples[i] = sample_of<T>(rgb[i / 3][i % 3]);
+        }
+        std::vector<std::byte> data = bytes_of(samples);
+        openxisf::convert_rgb_to_lab(data, image);
+        const std::vector<T> lab = samples_of<T>(data);
+        for (std::size_t pixel = 0; pixel < 2; ++pixel) {
+            const color_components given{component_of(samples[pixel * 3]), component_of(samples[(pixel * 3) + 1]),
+                                         component_of(samples[(pixel * 3) + 2])};
+            const color_components expected = srgb.rgb_to_lab(given);
+            for (std::size_t channel = 0; channel < 3; ++channel) {
+                EXPECT_NEAR(component_of(lab[(pixel * 3) + channel]), expected[channel], tolerance)
+                    << pixel << ' ' << channel;
+            }
+        }
+        openxisf::convert_lab_to_rgb(data, image);
+        const std::vector<T> back = samples_of<T>(data);
+        for (std::size_t i = 0; i < 6; ++i) {
+            EXPECT_NEAR(component_of(back[i]), component_of(samples[i]), tolerance) << i;
+        }
+    };
+    check(std::type_identity<std::uint32_t>{}, openxisf::sample_format::uint32, 1e-8);
+    check(std::type_identity<std::uint64_t>{}, openxisf::sample_format::uint64, 1e-12);
+    check(std::type_identity<float>{}, openxisf::sample_format::float32, 1e-6);
+}
+
 TEST(color, integer_samples_are_rounded_and_kept_in_their_range)
 {
     // UInt8 with bounds beyond its range: the results stay within 0 and 255.
@@ -414,6 +487,10 @@ TEST(color, pixel_conversion_refuses_what_it_cannot_convert)
     image_info infinite = reversed;
     infinite.bounds = openxisf::bounds{.lower = -std::numeric_limits<double>::infinity(), .upper = 1.0};
     EXPECT_TRUE(refuses(infinite, 24));
+    // Finite bounds whose width is not: black would become NaN and infinities.
+    image_info wide = reversed;
+    wide.bounds = openxisf::bounds{.lower = -1e308, .upper = 1e308};
+    EXPECT_TRUE(refuses(wide, 24));
     image_info singular = lab_image(sample_format::uint32, 3, openxisf::pixel_storage::planar);
     singular.rgb_working_space = rgb_working_space{};
     singular.rgb_working_space->x = {0.3, 0.3, 0.3};

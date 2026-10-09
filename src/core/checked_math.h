@@ -9,8 +9,9 @@
 #include <limits>
 #include <utility>
 
-// Size and offset computations on values read from a unit. A result that does not fit means that the unit
-// describes something that cannot exist, so an overflow is reported as invalid data.
+// Size and offset computations on values read from a unit, and in the layout that the writer computes. A result that
+// does not fit means that the unit describes something that cannot exist, so an overflow is reported as invalid data,
+// by the writer too: a model whose layout overflows 64 bits cannot be written.
 
 namespace openxisf::detail {
 

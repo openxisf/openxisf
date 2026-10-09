@@ -24,7 +24,8 @@ inline constexpr std::string_view monolithic_signature = "XISF0100";
 /// Where the header of a monolithic file starts: after the signature, the header length and the reserved field.
 inline constexpr std::uint64_t monolithic_header_offset = 16;
 
-/// The length of the shortest header of a monolithic file, the XML declaration and an empty root element (spec §9.2).
+/// The least header length of a monolithic file: 65 bytes, which the code of spec §9.2 gives an empty header, from
+/// "<?xml" to "</xisf>". A well-formed header can be shorter, with a self-closing root element.
 inline constexpr std::uint32_t min_header_length = 65;
 
 /// The header of a unit as found in its source, not yet parsed.

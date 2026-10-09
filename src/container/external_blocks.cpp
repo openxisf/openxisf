@@ -33,6 +33,7 @@ struct index_problem
 {
     errc code = errc::invalid_blocks_file;
     std::string message{};
+    error_origin origin{};
 };
 
 class external_locator
@@ -97,7 +98,7 @@ private:
             }
             block_descriptor& descriptor = *block.descriptor;
             if (descriptor.location.index_id && !index) {
-                fail(block, problem.code, problem.message);
+                fail(block, problem.code, problem.message, "location", problem.origin);
             } else {
                 place(block, descriptor, file, source, index ? &*index : nullptr);
             }
@@ -132,10 +133,13 @@ private:
                 return std::make_shared<thread_safe_source>(std::move(input));
             }
         } catch (const io_error& failure) {
-            fail_all(file, failure.code(), "the external file " + name + " cannot be opened: " + failure.what());
+            // The exception keeps its class whatever its code, as the resolver gave it.
+            fail_all(file, failure.code(), "the external file " + name + " cannot be opened: " + failure.what(),
+                     {.raised = error_origin::kind::io, .system_code = failure.system_code()});
             return nullptr;
         } catch (const unsupported_error& failure) {
-            fail_all(file, failure.code(), "the external file " + name + " is not opened: " + failure.what());
+            fail_all(file, failure.code(), "the external file " + name + " is not opened: " + failure.what(),
+                     {.raised = error_origin::kind::unsupported});
             return nullptr;
         }
         fail_all(file, errc::unsupported_location, "the resolver does not open the external file " + name);
@@ -162,7 +166,9 @@ private:
         } catch (const limit_error& failure) {
             problem = {.code = failure.code(), .message = prefix + failure.what()};
         } catch (const io_error& failure) {
-            problem = {.code = failure.code(), .message = prefix + failure.what()};
+            problem = {.code = failure.code(),
+                       .message = prefix + failure.what(),
+                       .origin = {.raised = error_origin::kind::io, .system_code = failure.system_code()}};
         }
         return std::nullopt;
     }
@@ -269,19 +275,22 @@ private:
         return {.element = block.path, .attribute = attribute};
     }
 
-    // Makes the block unavailable, with an error. In strict mode, the log throws instead.
-    bool fail(data_block& block, errc code, std::string message, const char* attribute = "location")
+    // Makes the block unavailable, with an error, which a read of the block throws again as origin says. In strict
+    // mode, the log throws instead.
+    bool fail(data_block& block, errc code, std::string message, const char* attribute = "location",
+              const error_origin& origin = {})
     {
-        log_.error(code, std::move(message), context_of(block, attribute));
+        log_.error(code, std::move(message), context_of(block, attribute), origin);
         block.problem = log_.entries().back();
+        block.origin = origin;
         block.descriptor.reset();
         return false;
     }
 
-    void fail_all(const external_file& file, errc code, const std::string& message)
+    void fail_all(const external_file& file, errc code, const std::string& message, const error_origin& origin = {})
     {
         for (const std::size_t i : file.blocks) {
-            fail(blocks_[i], code, message);
+            fail(blocks_[i], code, message, "location", origin);
         }
     }
 

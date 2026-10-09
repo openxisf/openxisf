@@ -32,6 +32,10 @@ constexpr std::size_t icc_flags_last_byte = 47;
 
 constexpr std::string_view indentation = "   ";
 
+// The longest String written as character data. A longer one is written in a data block, since readers limit the size
+// of a header (64 MiB by default in OpenXISF), and a data block is read within the limits of loaded data.
+constexpr std::size_t max_character_data = std::size_t{1} << 20;
+
 std::string format_double(double value)
 {
     return format_float(value);
@@ -220,10 +224,11 @@ private:
         }
     }
 
-    // As character data when XML can hold it, and in a data block otherwise (spec §11.1.6).
+    // As character data when XML can hold it and it is not too long for the header, and in a data block otherwise
+    // (spec §11.1.6).
     void serialize_string(xml_element& element, const std::string& text)
     {
-        if (is_xml_text(text)) {
+        if (text.size() <= max_character_data && is_xml_text(text)) {
             element.text = text;
             return;
         }

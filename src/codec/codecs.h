@@ -55,6 +55,10 @@ void lz4hc_compress(std::span<const std::byte> input, int level, std::vector<std
 /// that declares its content size is decoded straight into output and needs no window buffer.
 void zstd_decompress(std::span<const std::byte> input, std::span<std::byte> output, std::uint64_t max_window);
 
+/// True when input starts with the header of a Zstandard frame that does not declare its content size, which
+/// zstd_decompress() decodes through a window buffer. False for any other input, which it decodes in place or refuses.
+[[nodiscard]] bool zstd_needs_window(std::span<const std::byte> input) noexcept;
+
 /// Compresses input into a single Zstandard frame, which declares its content size, at a level from 1 to 22.
 void zstd_compress(std::span<const std::byte> input, int level, std::vector<std::byte>& output);
 

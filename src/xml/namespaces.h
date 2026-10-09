@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 // Namespaces in XML 1.0, which pugixml leaves to its users: the namespace of an element follows from the declarations
@@ -39,13 +40,20 @@ public:
     [[nodiscard]] std::optional<std::string_view> namespace_of(std::string_view name) const noexcept;
 
 private:
+    static constexpr std::size_t no_binding = static_cast<std::size_t>(-1);
+
     struct binding
     {
         std::string_view prefix;
         std::string_view uri;
+        /// The binding of the same prefix that this one hides, or no_binding.
+        std::size_t hidden = no_binding;
     };
 
+    // The declarations in scope, in document order, and the innermost one of each prefix by its index there, so that
+    // a lookup does not depend on the number of declarations. The empty prefix is that of the default namespace.
     std::vector<binding> bindings_;
+    std::unordered_map<std::string_view, std::size_t> innermost_;
     std::vector<std::size_t> marks_;
 };
 

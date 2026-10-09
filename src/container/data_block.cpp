@@ -4,6 +4,7 @@
 #include "container/data_block.h"
 
 #include "codec/compressed_block.h"
+#include "core/allocation.h"
 #include "core/checked_math.h"
 #include "core/data_encoding.h"
 #include "core/scratch_buffer.h"
@@ -65,6 +66,26 @@ bool lowercase_hex_digits(std::string& text, std::size_t start) noexcept
         }
     }
     return changed;
+}
+
+// Turns the name that starts text, before its first colon or all of it without one, into lowercase when it has
+// uppercase letters and is_name() takes it in lowercase. True when it did; a name that is none in any case stays as
+// written, for the error about it.
+bool lowercase_name(std::string& text, bool (*is_name)(std::string_view) noexcept)
+{
+    std::string name = text.substr(0, text.find(':'));
+    bool changed = false;
+    for (char& c : name) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+            changed = true;
+        }
+    }
+    if (!changed || !is_name(name)) {
+        return false;
+    }
+    text.replace(0, name.size(), name);
+    return true;
 }
 
 // A block attribute as found, with where it was found.
@@ -247,10 +268,23 @@ private:
             if (!descriptor_.checksum) {
                 return false;
             }
+        } else if (context_.signed_unit && is_stored_apart(descriptor_.location.kind)) {
+            // Spec §10.5: a signature covers the header, so the data of a block stored apart from it are covered only
+            // through the checksum of the block.
+            log_.warning(errc::missing_checksum,
+                         "the unit is signed, but the data block has no checksum, so the signature does not cover its "
+                         "data",
+                         {.element = block_.path});
         }
         if (const std::optional<attribute_value> value = attribute(compression_attribute)) {
             compression_context_ = value->context;
-            descriptor_.compression = attempt([&value] { return parse_compression(value->text); }, value->context);
+            // The specification names codecs in lowercase; another case names the same codec, so it is accepted with a
+            // warning.
+            std::string text(value->text);
+            if (lowercase_name(text, is_codec_name)) {
+                log_.warning(errc::invalid_compression, "the codec name has uppercase letters", value->context);
+            }
+            descriptor_.compression = attempt([&text] { return parse_compression(text); }, value->context);
             if (!descriptor_.compression) {
                 return false;
             }
@@ -273,12 +307,17 @@ private:
         return true;
     }
 
-    // Uppercase hexadecimal digits name the same digest, so they are accepted with a warning.
+    // An algorithm name in another case than that of the specification, and uppercase hexadecimal digits, name the same
+    // algorithm and digest, so they are accepted with a warning. Those of an unknown algorithm are reported as written.
     std::optional<block_checksum> read_checksum(const attribute_value& value)
     {
         std::string text(value.text);
+        if (lowercase_name(text, is_checksum_algorithm_name)) {
+            log_.warning(errc::invalid_checksum, "the checksum algorithm name has uppercase letters", value.context);
+        }
         const std::size_t colon = text.find(':');
-        if (colon != std::string::npos && lowercase_hex_digits(text, colon + 1)) {
+        if (colon != std::string::npos && is_checksum_algorithm_name(std::string_view(text).substr(0, colon)) &&
+            lowercase_hex_digits(text, colon + 1)) {
             log_.warning(errc::invalid_checksum, "the digest has uppercase hexadecimal digits", value.context);
         }
         return attempt([&text] { return parse_checksum(text); }, value.context);
@@ -487,10 +526,8 @@ subblock_progress decompression_progress(const block_progress& progress, std::ui
 std::size_t stored_allocation(const block_descriptor& descriptor, const limits& limits)
 {
     const std::uint64_t size = stored_size(descriptor);
-    if (is_stored_apart(descriptor.location.kind) && limits.max_allocation != 0 && size > limits.max_allocation) {
-        throw limit_error(errc::allocation_too_large, "the data block has " + std::to_string(size) +
-                                                          " bytes, more than the allocation limit of " +
-                                                          std::to_string(limits.max_allocation));
+    if (is_stored_apart(descriptor.location.kind)) {
+        check_allocation(size, limits, "the data block has");
     }
     return checked_cast<std::size_t>(size);
 }
@@ -539,7 +576,7 @@ template <typename Read> decltype(auto) with_context_of(const data_block& block,
 [[noreturn]] void throw_unavailable(const data_block& block)
 {
     if (block.problem) {
-        throw_unit_error(block.problem->code, block.problem->message, block.problem->context);
+        throw_unit_error(block.problem->code, block.problem->message, block.problem->context, block.origin);
     }
     throw usage_error(errc::invalid_argument, "the data block has neither a descriptor nor a problem",
                       {.element = block.path});

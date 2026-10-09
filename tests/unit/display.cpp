@@ -200,6 +200,16 @@ TEST(display, samples_beyond_the_white_point_count_as_white)
     expect_component(adaptive_gray({1.5, 2.0, 3.0}, 3, 1), 0, 0.0, 1.0, 1.0);
 }
 
+TEST(display, a_black_channel_gets_a_step_function)
+{
+    // The median and MADN are 0: s = 0, h = 1 and m = M(0; 0.25) = 0 (equation [14]), which takes 0 to 0 and every
+    // sample above it to 1.
+    const display_function black = adaptive_gray({0.0, 0.0, 0.0}, 3, 1);
+    expect_component(black, 0, 0.0, 1.0, 0.0);
+    EXPECT_EQ(openxisf::apply_display_function(black, 0, 0.0), 0.0);
+    EXPECT_EQ(openxisf::apply_display_function(black, 0, 1e-6), 1.0);
+}
+
 TEST(display, a_median_of_one_half_is_a_dark_background)
 {
     // Equation [11]: a_c = 0 when the median is at most 1/2. MADN = 1.4826 × 0.1, s = 0.5 - 0.415128 = 0.084872, h = 1,
@@ -223,6 +233,25 @@ TEST(display, each_channel_has_its_own_adaptive_function)
     expect_component(function, 1, 0.0, 1.0, 2.0 / 3.0);
     expect_component(function, 2, 0.0, 1.0, 0.4375);
     expect_identity(function, 3);
+}
+
+TEST(display, alpha_channels_do_not_count)
+{
+    // The image of each_channel_has_its_own_adaptive_function with an alpha channel whose samples would change every
+    // statistic, in both storage models.
+    const std::vector<double> planar{0.1, 0.2, 0.3, 0.4, 0.4, 0.5, 0.6, 0.7, 0.9, 1.0, 0.0, 1.0};
+    image_info with_alpha = image_of(openxisf::color_space::rgb, 3, 1);
+    with_alpha.geometry.channels = 4;
+    const display_function expected =
+        openxisf::adaptive_display_function(bytes_of(rgb_planar()), image_of(openxisf::color_space::rgb, 3, 1));
+    EXPECT_EQ(openxisf::adaptive_display_function(bytes_of(planar), with_alpha), expected);
+
+    const std::vector<double> normal{0.1, 0.4, 0.6, 1.0, 0.2, 0.4, 0.7, 0.0, 0.3, 0.5, 0.9, 1.0};
+    with_alpha.pixel_storage = openxisf::pixel_storage::normal;
+    EXPECT_EQ(openxisf::adaptive_display_function(bytes_of(normal), with_alpha), expected);
+    EXPECT_EQ(openxisf::adaptive_display_function(bytes_of(normal), with_alpha, {.linked = true}),
+              openxisf::adaptive_display_function(bytes_of(rgb_planar()), image_of(openxisf::color_space::rgb, 3, 1),
+                                                  {.linked = true}));
 }
 
 TEST(display, linked_channels_share_one_adaptive_function)
@@ -329,6 +358,10 @@ TEST(display, the_adaptive_function_refuses_what_it_cannot_measure)
     image_info infinite = gray;
     infinite.bounds = openxisf::bounds{.lower = 0.0, .upper = std::numeric_limits<double>::infinity()};
     EXPECT_TRUE(refuses(data, infinite));
+    // Finite bounds whose width is not: every sample would become 0.
+    image_info wide = gray;
+    wide.bounds = openxisf::bounds{.lower = -1e308, .upper = 1e308};
+    EXPECT_TRUE(refuses(data, wide));
     image_info unbounded = gray;
     unbounded.bounds.reset();
     EXPECT_TRUE(refuses(data, unbounded));

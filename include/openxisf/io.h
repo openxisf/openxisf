@@ -63,7 +63,8 @@ public:
 ///
 /// Bytes are appended with write(). A sink that can also rewrite bytes it already holds lets the writer stream a unit
 /// with bounded memory. finish() follows the last byte of a complete unit; a sink destroyed without it holds an
-/// incomplete one, which file_sink discards. Sinks are not copyable.
+/// incomplete one, which file_sink discards. A sink receives one unit, or one file of a distributed unit, from its
+/// start: the writer refuses a sink that already holds bytes. Sinks are not copyable.
 class OPENXISF_API output_sink
 {
 public:
@@ -104,12 +105,12 @@ public:
     explicit file_source(std::string_view path);
     ~file_source() override;
 
-    std::uint64_t size() const override;
+    [[nodiscard]] std::uint64_t size() const override;
     void read(std::uint64_t offset, std::span<std::byte> destination) const override;
     /// True.
-    bool supports_concurrent_reads() const override;
+    [[nodiscard]] bool supports_concurrent_reads() const override;
     /// The path.
-    std::string description() const override;
+    [[nodiscard]] std::string description() const override;
 
 private:
     struct state;
@@ -130,19 +131,28 @@ struct file_sink_options
 ///
 /// The temporary file is named `.openxisf-<16 hexadecimal digits>.tmp`. Only a process that ends abruptly leaves one
 /// behind. Supports rewrite().
+///
+/// The new file is created like any new file: it has the permissions that the system gives one, not those of the file
+/// it replaces. A target that is a symbolic link is itself replaced by the new file; the file that it points to is
+/// left as it is. On Windows, a target that another program has open is replaced only when that program let others
+/// delete it (`FILE_SHARE_DELETE`), as file_source does, and a target with the read-only attribute is not replaced;
+/// otherwise finish() fails. POSIX systems replace a target that cannot be written, as the directory allows.
 class OPENXISF_API file_sink final : public output_sink
 {
 public:
-    /// Creates the temporary file for a target at path, which is UTF-8 on every platform.
+    /// Creates the temporary file for a target at path, which is UTF-8 on every platform. A relative path is taken
+    /// from the current directory now: finish() replaces that target, whatever the current directory is by then.
     /// @throws usage_error when path is empty or not valid UTF-8.
-    /// @throws io_error (errc::open_failed) when the temporary file cannot be created.
+    /// @throws io_error when the temporary file cannot be created, or the current directory of a relative path cannot
+    ///         be found (errc::open_failed), or when the system provides no random data for its name
+    ///         (errc::entropy_unavailable).
     explicit file_sink(std::string_view path, file_sink_options options = {});
     ~file_sink() override;
 
     void write(std::span<const std::byte> data) override;
-    std::uint64_t position() const override;
+    [[nodiscard]] std::uint64_t position() const override;
     /// True.
-    bool can_rewrite() const override;
+    [[nodiscard]] bool can_rewrite() const override;
     void rewrite(std::uint64_t offset, std::span<const std::byte> data) override;
     /// Replaces the target with the temporary file. When it throws, the temporary file is gone, and the target keeps
     /// its old content unless the failure was the flush to disk that follows the replacement.
@@ -162,10 +172,10 @@ public:
     /// Owns data. A vector that is not moved in is copied, so pass a std::span to borrow it instead.
     explicit memory_source(std::vector<std::byte> data) noexcept;
 
-    std::uint64_t size() const override;
+    [[nodiscard]] std::uint64_t size() const override;
     void read(std::uint64_t offset, std::span<std::byte> destination) const override;
     /// True.
-    bool supports_concurrent_reads() const override;
+    [[nodiscard]] bool supports_concurrent_reads() const override;
 
 private:
     std::vector<std::byte> owned_;
@@ -177,9 +187,9 @@ class OPENXISF_API memory_sink final : public output_sink
 {
 public:
     void write(std::span<const std::byte> data) override;
-    std::uint64_t position() const override;
+    [[nodiscard]] std::uint64_t position() const override;
     /// True.
-    bool can_rewrite() const override;
+    [[nodiscard]] bool can_rewrite() const override;
     void rewrite(std::uint64_t offset, std::span<const std::byte> data) override;
 
     /// The bytes written so far.
@@ -211,11 +221,11 @@ public:
     /// @throws usage_error when read is empty.
     callback_source(std::uint64_t size, read_function read, callback_source_options options = {});
 
-    std::uint64_t size() const override;
+    [[nodiscard]] std::uint64_t size() const override;
     /// Calls the read function, whose exceptions pass through unchanged.
     void read(std::uint64_t offset, std::span<std::byte> destination) const override;
-    bool supports_concurrent_reads() const override;
-    std::string description() const override;
+    [[nodiscard]] bool supports_concurrent_reads() const override;
+    [[nodiscard]] std::string description() const override;
 
 private:
     std::uint64_t size_;
@@ -241,8 +251,8 @@ public:
     explicit callback_sink(write_function write, rewrite_function rewrite = {}, finish_function finish = {});
 
     void write(std::span<const std::byte> data) override;
-    std::uint64_t position() const override;
-    bool can_rewrite() const override;
+    [[nodiscard]] std::uint64_t position() const override;
+    [[nodiscard]] bool can_rewrite() const override;
     void rewrite(std::uint64_t offset, std::span<const std::byte> data) override;
     void finish() override;
 
@@ -273,10 +283,12 @@ struct external_reference
 
 /// Opens the file of an external reference, for a reader. Returning null refuses it. Throwing io_error or
 /// unsupported_error says that it cannot be opened, or must not be. The data blocks in the file are then unavailable,
-/// with an error diagnostic of the code of the exception, or errc::unsupported_location for null. Any other exception
-/// passes through and fails the open. A resolver is called while a unit is opened, on that thread, once for each file,
-/// and again when reader::load_ancillary_data() opens the unit again; the reader keeps the source it returns as long as
-/// it exists.
+/// with an error diagnostic of the code of the exception, or errc::unsupported_location for null; a strict open, and a
+/// read of such a block, throw an exception of the same class and code, with the system error of an io_error, as they
+/// do for an io_error of the source while the block index of a data blocks file is read. Any other exception passes
+/// through and fails the open. A resolver is called while a unit is opened, on that thread, once for each file, and
+/// again when reader::load_ancillary_data() opens the unit again; the reader keeps the source it returns as long as it
+/// exists.
 using external_resolver = std::function<std::unique_ptr<input_source>(const external_reference& reference)>;
 
 /// Options of file_resolver().
@@ -296,8 +308,10 @@ struct file_resolver_options
 ///
 /// A missing file is errc::open_failed, and a file that is not a regular file, such as a directory or a device,
 /// errc::not_a_regular_file. The checks protect against what a unit names, not against programs that change the
-/// directory tree while a unit is opened.
+/// directory tree while a unit is opened. A relative header_directory is taken from the current directory when the
+/// resolver is made, so that a unit opened by a relative path finds its files when it is read again from another one.
 /// @throws usage_error when header_directory is empty or not valid UTF-8.
+/// @throws io_error (errc::open_failed) when header_directory is relative and the current directory cannot be found.
 [[nodiscard]] OPENXISF_API external_resolver file_resolver(std::string_view header_directory,
                                                            file_resolver_options options = {});
 

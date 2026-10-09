@@ -19,7 +19,6 @@ namespace {
 
 using openxisf::date_time;
 using openxisf::errc;
-using openxisf::property_type;
 using openxisf::property_value;
 using openxisf::reader;
 using openxisf::severity;
@@ -124,16 +123,26 @@ TEST(conformance_metadata, references_in_the_metadata_element_name_properties)
     EXPECT_TRUE(file.properties().contains("XISF:Title"));
 }
 
-TEST(conformance_metadata, a_creation_time_written_as_a_string_is_tolerated)
+TEST(conformance_metadata, a_creation_time_written_as_a_string_is_read_as_the_time_point_it_holds)
 {
-    // PixInsight 1.9.4 writes XISF:CreationTime as a String. Its files open, strictly too.
+    // PixInsight 1.9.4 and 1.9.5 write XISF:CreationTime as a String. Their files open, strictly too, and the value is
+    // the TimePoint that the String holds, as an application written against spec §11.4.1 expects it; the deviation is
+    // an info diagnostic.
     const std::string header =
         header_with(metadata_with(R"(<Property id="XISF:CreationTime" type="String">2026-10-03T03:18:31Z</Property>)" +
                                   std::string(creator_application)));
     const reader file = open_header(header, {.strict = true});
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::reserved_property_type,
+    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::info, errc::reserved_property_type,
                                   "/xisf/Metadata[1]/Property[1]"));
-    EXPECT_EQ(file.metadata().at("XISF:CreationTime").value.type(), property_type::string);
+    EXPECT_EQ(file.metadata().at("XISF:CreationTime").value,
+              property_value(date_time{.year = 2026, .month = 10, .day = 3, .hour = 3, .minute = 18, .second = 31}));
+
+    // A String that holds no TimePoint stays a String, with a warning.
+    const reader other = open_header(header_with(metadata_with(
+        R"(<Property id="XISF:CreationTime" type="String">last night</Property>)" + std::string(creator_application))));
+    EXPECT_TRUE(single_diagnostic(other.diagnostics(), severity::warning, errc::reserved_property_type,
+                                  "/xisf/Metadata[1]/Property[1]"));
+    EXPECT_EQ(other.metadata().at("XISF:CreationTime").value, property_value("last night"));
 }
 
 } // namespace

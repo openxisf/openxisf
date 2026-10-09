@@ -40,9 +40,28 @@ namespace openxisf::detail {
 /// a character that XML does not allow, such as U+0000, or repeats an attribute of an element (errc::invalid_xml), or
 /// has a document type declaration (errc::doctype_not_allowed).
 /// Throws limit_error when its elements are nested deeper than limits.max_xml_depth (errc::xml_too_deep) or are more
-/// than limits.max_xml_elements (errc::too_many_xml_elements). The limits count every element of the document.
+/// than limits.max_xml_elements (errc::too_many_xml_elements). The limits count every element of the document, and
+/// are checked on the tags of the text before the document is built, so that a header beyond them costs no memory;
+/// text that is not well-formed fails with a limit when its tags are beyond one.
 [[nodiscard]] std::unique_ptr<pugi::xml_document> parse_xml(std::string_view text, std::uint64_t offset,
                                                             const limits& limits);
+
+/// A character of a text that XML 1.0 does not allow: where it is, and its code point.
+struct restricted_character
+{
+    std::size_t offset = 0;
+    std::uint32_t code_point = 0;
+};
+
+/// The first character of text that XML 1.0 does not allow (Legal Character) and that parse_xml() reads all the same:
+/// a control character other than tab, line feed and carriage return, U+FFFE or U+FFFF, written as it is anywhere, or
+/// as a character reference where pugixml reads one. Empty when there is none.
+[[nodiscard]] std::optional<restricted_character> first_restricted_character(std::string_view text);
+
+/// Where the first character data outside the elements of text is: text other than white space before, between or after
+/// its top-level elements, comments and processing instructions, or a CDATA section there, which XML does not allow and
+/// pugixml accepts. Empty when there is none. text is a document that parse_xml() accepted.
+[[nodiscard]] std::optional<std::size_t> first_text_outside_elements(std::string_view text);
 
 /// The character data of element: the text of its character data and CDATA children, in order.
 [[nodiscard]] std::string character_data(const pugi::xml_node& element);
@@ -50,8 +69,17 @@ namespace openxisf::detail {
 /// Where node starts in the text it was parsed from: the '<' of an element. Empty when pugixml cannot tell.
 [[nodiscard]] std::optional<std::size_t> element_offset(const pugi::xml_node& element) noexcept;
 
-/// The length of the element that starts at text[start], from its '<' to the end of its end tag. text is a document
-/// that parse_xml() accepted. An element that does not end, which such a text cannot have, extends to the end of text.
+/// Past the first terminator at or after position from of text, or the end of text when there is none.
+[[nodiscard]] std::size_t past(std::string_view text, std::size_t from, std::string_view terminator) noexcept;
+
+/// Where the tag that starts at text[start], a '<', ends: its first '>' outside quoted attribute values. Empty when it
+/// does not end.
+[[nodiscard]] std::optional<std::size_t> tag_end(std::string_view text, std::size_t start) noexcept;
+
+/// The length of the element that starts at text[start], from its '<' to the end of its end tag, found by the nesting
+/// of its tags; comments, CDATA sections and processing instructions are skipped. In a document that parse_xml()
+/// accepted, that is the element. In other text it is where the element would end by its tags alone, whatever their
+/// names, and an element that does not end extends to the end of text.
 [[nodiscard]] std::size_t element_length(std::string_view text, std::size_t start);
 
 } // namespace openxisf::detail

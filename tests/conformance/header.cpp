@@ -93,6 +93,23 @@ TEST(conformance_header, a_header_beyond_ascii_cannot_declare_another_encoding)
                                                        R"(<Property id="Test:Name" type="String">Ñandú</Property>)")));
 }
 
+TEST(conformance_header, references_in_the_xml_declaration_are_read_as_in_attribute_values)
+{
+    // pugixml reads them, so a reference to U+0000 would end the name of an encoding before it starts, which would pass
+    // for none.
+    EXPECT_TRUE(
+        refuses(errc::invalid_xml, header_with(R"(<?xml version="1.0" encoding="&#0;ISO-8859-1"?>)", root_start_tag,
+                                               R"(<Property id="Test:Name" type="String">Ñandú</Property>)")));
+    EXPECT_TRUE(refuses(errc::invalid_xml, header_with(R"(<?xml version="1.0&#xD800;"?>)", root_start_tag)));
+    // A control character gets the warning that it gets elsewhere.
+    const std::string header = header_with(R"(<?xml version="1.0" encoding="UTF-8&#1;"?>)", root_start_tag);
+    const reader file = open_header(header);
+    ASSERT_EQ(file.diagnostics().size(), 2U) << openxisf::test::describe(file.diagnostics());
+    EXPECT_EQ(file.diagnostics()[0].code, errc::invalid_xml_declaration);
+    EXPECT_EQ(file.diagnostics()[1].code, errc::invalid_character);
+    EXPECT_EQ(file.diagnostics()[1].context.offset, 16 + header.find("&#1;"));
+}
+
 TEST(conformance_header, a_byte_order_mark_before_the_header_is_skipped)
 {
     EXPECT_TRUE(no_diagnostics(open_header("\xEF\xBB\xBF" + header_xml()).diagnostics()));
@@ -102,6 +119,28 @@ TEST(conformance_header, the_header_is_utf8)
 {
     // Latin-1 for Ñ.
     EXPECT_TRUE(refuses(errc::invalid_utf8, header_xml("<Property id=\"Test:Name\" type=\"String\">\xD1</Property>")));
+}
+
+TEST(conformance_header, a_character_that_xml_does_not_allow_is_read_with_a_warning)
+{
+    // XML 1.0, Legal Character: a control character other than tab, line feed and carriage return means what it says,
+    // so the value keeps it, and the header has a warning about the first one.
+    const std::string header = header_xml(R"(<Property id="Test:Bell" type="String">a&#7;b</Property>)"
+                                          "<Property id=\"Test:Escape\" type=\"String\">\x1B</Property>");
+    const reader file = open_header(header);
+    ASSERT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_character));
+    EXPECT_EQ(file.diagnostics().front().context.offset, 16 + header.find("&#7;"));
+    EXPECT_EQ(file.properties().at("Test:Bell").value, openxisf::property_value("a\ab"));
+    EXPECT_EQ(file.properties().at("Test:Escape").value, openxisf::property_value("\x1B"));
+
+    // What follows where the header stops being well-formed XML, after the root element, is not read: the warning
+    // about it is the only one.
+    for (const std::string_view after :
+         {"<Extension xmlns=\"urn:example\">\x01", "<Extension xmlns=\"urn:example\">&#1;"}) {
+        EXPECT_TRUE(single_diagnostic(open_header(header_xml() + std::string(after)).diagnostics(), severity::warning,
+                                      errc::invalid_xml, "/Extension[1]"))
+            << after;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -192,6 +231,20 @@ TEST(conformance_header, elements_after_the_root_element_are_ignored_with_a_warn
 {
     const reader file = open_header(header_xml() + "<Other/>");
     EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::unknown_element, "/Other[1]"));
+}
+
+TEST(conformance_header, character_data_outside_the_root_element_is_ignored_with_a_warning)
+{
+    // XML allows markup and white space alone around the root element, and pugixml skips any text there.
+    const std::string root = header_xml().substr(xml_declaration.size());
+    for (const std::string& header : {std::string(xml_declaration) + "text" + root, header_xml() + "\ntext\n",
+                                      header_xml() + "<!-- --> &amp;", header_xml() + "<![CDATA[ ]]>"}) {
+        const reader file = open_header(header);
+        EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_xml)) << header;
+    }
+    const reader before = open_header(std::string(xml_declaration) + "\n text" + root);
+    ASSERT_FALSE(before.diagnostics().empty());
+    EXPECT_EQ(before.diagnostics().front().context.offset, 16 + xml_declaration.size() + 2);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

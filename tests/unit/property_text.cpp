@@ -140,9 +140,10 @@ TEST(property_text, white_space_around_values_and_parts_is_ignored)
     EXPECT_EQ(value_of(property_type::complex64, " ( 1.5 , -2 ) ").get<std::complex<double>>(),
               std::complex<double>(1.5, -2));
     EXPECT_EQ(value_of(property_type::time_point, " 2026-01-02T03:04:05Z ").get<date_time>().second, 5U);
-    // A Float128 keeps its text, without the white space.
+    // A Float128 keeps its text, without the white space, and a Complex128 without that of its parts too.
     EXPECT_EQ(value_of(property_type::float128, "  1.25  ").get<std::string>(), "1.25");
-    EXPECT_EQ(check_complex128(" (1.5, 2) "), "(1.5, 2)");
+    EXPECT_EQ(check_complex128(" (1.5, 2) "), "(1.5,2)");
+    EXPECT_EQ(value_of(property_type::complex128, " ( 1.5 ,\t-2 ) ").get<std::string>(), "(1.5,-2)");
 }
 
 TEST(property_text, complex_numbers_and_their_non_finite_parts)

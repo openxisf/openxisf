@@ -7,8 +7,10 @@
 #include <openxisf/io.h>
 #include <openxisf/reader.h>
 
+#include "codec/codecs.h"
 #include "model/unit.h"
 #include "support/bytes.h"
+#include "support/faulty_io.h"
 #include "support/fixture_builder.h"
 #include "support/opened_unit.h"
 #include "support/throws.h"
@@ -18,6 +20,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <functional>
 #include <memory>
 #include <span>
 #include <utility>
@@ -85,6 +89,71 @@ TEST(pixels, data_that_keep_their_layout_are_read_straight_into_the_destination)
     ASSERT_EQ(reads.size(), 1U);
     EXPECT_EQ(reads.front().data(), destination.data());
     EXPECT_EQ(reads.front().size(), destination.size());
+}
+
+// Success when read() throws what a faulty source throws for a failure of kind.
+testing::AssertionResult failed_with(openxisf::test::fault kind, const std::function<void()>& read)
+{
+    using openxisf::test::fault;
+    switch (kind) {
+    case fault::error:
+        return openxisf::test::throws<openxisf::io_error>(errc::read_failed, read);
+    case fault::short_transfer:
+        return openxisf::test::throws<openxisf::io_error>(errc::end_of_data, read);
+    case fault::foreign_exception:
+        break;
+    }
+    try {
+        read();
+    } catch (const openxisf::test::injected_fault&) {
+        return testing::AssertionSuccess();
+    } catch (const std::exception& other) {
+        return testing::AssertionFailure() << "threw another exception: " << other.what();
+    }
+    return testing::AssertionFailure() << "threw nothing";
+}
+
+TEST(pixels, a_failure_of_the_source_stops_a_read_there_and_passes_through)
+{
+    // An attached image of 10 pixels and a compressed one, read in pieces of 4 bytes into a vector or into memory of
+    // the caller, from a source whose read of each piece in turn fails in each way: the read throws what the source
+    // threw, and reads nothing after it.
+    using openxisf::test::fault;
+    using openxisf::test::faulty_source;
+    std::vector<std::byte> compressed;
+    openxisf::detail::zlib_compress(openxisf::test::pattern(10), 6, compressed);
+    const openxisf::memory_source file(openxisf::test::file_with_attachments(
+        openxisf::test::header_xml(
+            R"(<Image geometry="10:1:1" sampleFormat="UInt8" location="attachment:{0}"/>)"
+            R"(<Image geometry="10:1:1" sampleFormat="UInt8" compression="zlib:10" location="attachment:{1}"/>)"),
+        {openxisf::test::pattern(10), compressed}));
+    const openxisf::pixel_read_options options{.progress = [](std::uint64_t, std::uint64_t) { return true; }};
+    // The reads of the open: the first 16 bytes and the header.
+    constexpr std::size_t open_reads = 2;
+    for (const std::size_t index : {0U, 1U}) {
+        const std::size_t pieces = index == 0 ? 3 : (compressed.size() + 3) / 4;
+        for (const bool into_vector : {true, false}) {
+            for (const fault kind : {fault::error, fault::short_transfer, fault::foreign_exception}) {
+                for (std::size_t piece = 1; piece <= pieces; ++piece) {
+                    auto source = std::make_unique<faulty_source>(file, open_reads + piece, kind);
+                    const faulty_source& faulty = *source;
+                    const unit opened(std::move(source), {});
+                    std::vector<std::byte> destination(10);
+                    EXPECT_TRUE(
+                        failed_with(kind,
+                                    [&] {
+                                        if (into_vector) {
+                                            destination = openxisf::detail::read_pixels(opened, index, options, 4);
+                                        } else {
+                                            openxisf::detail::read_pixels(opened, index, destination, options, 4);
+                                        }
+                                    }))
+                        << "image " << index << ", piece " << piece;
+                    EXPECT_EQ(faulty.reads(), open_reads + piece) << "image " << index << ", piece " << piece;
+                }
+            }
+        }
+    }
 }
 
 TEST(pixels, an_unavailable_block_throws_its_error_before_any_progress)

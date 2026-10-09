@@ -103,6 +103,12 @@ struct block_checksum
 /// errc::unsupported_checksum for another algorithm name, and invalid_data_error with errc::invalid_checksum otherwise.
 [[nodiscard]] block_checksum parse_checksum(std::string_view text);
 
+/// True when name is an algorithm name or alternate name of spec §10.5, Table 9, as written there, in lowercase.
+[[nodiscard]] bool is_checksum_algorithm_name(std::string_view name) noexcept;
+
+/// True when name is a codec name of spec §10.6, with or without +sh, as written there, in lowercase.
+[[nodiscard]] bool is_codec_name(std::string_view name) noexcept;
+
 /// Parses a compression attribute, codec:uncompressed-size, or codec+sh:uncompressed-size:item-size for the codecs with
 /// byte shuffling, whose item size is at least 1. subblocks stays empty. Throws unsupported_error with
 /// errc::unsupported_compression for another codec name, and invalid_data_error with errc::invalid_compression

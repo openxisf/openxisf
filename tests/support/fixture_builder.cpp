@@ -114,8 +114,8 @@ std::vector<std::byte> file_with_attachments(std::string_view header, const std:
     }
 }
 
-std::vector<std::byte> blocks_file(const std::vector<index_node>& nodes, const std::vector<placed_bytes>& blocks,
-                                   std::uint64_t size, std::uint64_t reserved)
+std::vector<placed_bytes> blocks_file_parts(const std::vector<index_node>& nodes,
+                                            const std::vector<placed_bytes>& blocks, std::uint64_t reserved)
 {
     std::vector<placed_bytes> parts{{.position = 0, .data = bytes("XISB0100")}};
     std::vector<std::byte> header;
@@ -135,11 +135,16 @@ std::vector<std::byte> blocks_file(const std::vector<index_node>& nodes, const s
         parts.push_back({.position = node.position, .data = std::move(data)});
     }
     parts.insert(parts.end(), blocks.begin(), blocks.end());
+    return parts;
+}
 
+std::vector<std::byte> blocks_file(const std::vector<index_node>& nodes, const std::vector<placed_bytes>& blocks,
+                                   std::uint64_t size, std::uint64_t reserved)
+{
     // std::size_t and std::uint64_t are the same type on some platforms, where a cast would be useless.
     const std::size_t initial = size;
     std::vector<std::byte> file(initial);
-    for (const placed_bytes& part : parts) {
+    for (const placed_bytes& part : blocks_file_parts(nodes, blocks, reserved)) {
         const std::size_t end = part.position + part.data.size();
         if (file.size() < end) {
             file.resize(end);

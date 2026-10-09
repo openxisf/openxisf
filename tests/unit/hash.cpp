@@ -7,6 +7,7 @@
 
 #include "core/data_encoding.h"
 #include "support/bytes.h"
+#include "support/environment.h"
 #include "support/throws.h"
 
 #include <gtest/gtest.h>
@@ -281,6 +282,41 @@ TEST(hash, the_digest_does_not_depend_on_how_the_message_is_cut)
                 EXPECT_EQ(encode_hex(state.finish()), whole)
                     << hash_name(algorithm) << ", pieces of " << piece << ", " << backend_name(backend);
             }
+        }
+    }
+}
+
+TEST(hash, hashes_a_message_of_more_than_4_gib_in_one_piece)
+{
+    // The message holds 2^32 + 7 bytes of the test pattern, given in a single update. Like the large samples, this runs
+    // only where OPENXISF_LARGE_SAMPLES_DIR is set, since it takes 4 GiB of memory. The digests come from hashlib of
+    // Python.
+    if (!openxisf::test::environment_variable("OPENXISF_LARGE_SAMPLES_DIR")) {
+        GTEST_SKIP() << "OPENXISF_LARGE_SAMPLES_DIR is not set";
+    }
+    struct expectation
+    {
+        hash_algorithm algorithm{};
+        std::string_view digest{};
+    };
+    constexpr std::array expected{
+        expectation{.algorithm = hash_algorithm::sha1, .digest = "22276a13dc95a0c3c894ef70514eacdd40ec29ea"},
+        expectation{.algorithm = hash_algorithm::sha256,
+                    .digest = "6bf766a835b5f5db2a13c00e3a5b870ef91637ee0f2d01b6f10a800f459eba59"},
+        expectation{.algorithm = hash_algorithm::sha512,
+                    .digest = "bc7cdb4d2be8f7f5a1341c84ad16cf2f4f38a39d590385c7b7b58ed7bf9c807f"
+                              "b3c31d37b73f5bcefe63ac07d81785eb0c10da28d8e186b66bffb42c8bc5b576"},
+        expectation{.algorithm = hash_algorithm::sha3_256,
+                    .digest = "143bd90206361932f765eceed958088194a8b77f4559fcfbd52295233f4bbdc1"},
+        expectation{.algorithm = hash_algorithm::sha3_512,
+                    .digest = "2539c73b7fbf7d2869afa0c061b52013161b00dd46307778261b25645600d9ae"
+                              "36894823cbfd7a28cade53c9dcd7c61057bc54945c36ebdf93e097d1c15e2cc2"},
+    };
+    const std::vector<std::byte> message = openxisf::test::pattern((std::size_t{1} << 32) + 7);
+    for (const hash_backend backend : backends()) {
+        for (const expectation& entry : expected) {
+            EXPECT_EQ(digest_of(entry.algorithm, message, backend), entry.digest)
+                << hash_name(entry.algorithm) << ", " << backend_name(backend);
         }
     }
 }

@@ -18,9 +18,12 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -104,6 +107,36 @@ TEST(conformance_property_element, scalars_complex_numbers_and_time_points_are_i
             .year = 2015, .month = 1, .day = 23, .hour = 19, .minute = 52, .second = 31, .nanosecond = 460'000'000}));
     // In document order.
     EXPECT_EQ(opened.properties.standalone.begin()->id, "HasData");
+}
+
+TEST(conformance_property_element, radix_literals_and_non_finite_values_in_the_value_attribute)
+{
+    // Spec §8.3: integers in binary, octal and hexadecimal, and each spelling of the values that are not finite.
+    const unit opened = open_body(R"(<Property id="Binary" type="UInt8" value="0b10100101"/>)"
+                                  R"(<Property id="Octal" type="Int16" value="0o777"/>)"
+                                  R"(<Property id="Hexadecimal" type="Int64" value="0x7fffffffffffffff"/>)"
+                                  R"(<Property id="NaN" type="Float64" value="NaN"/>)"
+                                  R"(<Property id="LowerNan" type="Float32" value="nan"/>)"
+                                  R"(<Property id="MinusNan" type="Float64" value="-nan"/>)"
+                                  R"(<Property id="PlusInf" type="Float64" value="+Inf"/>)"
+                                  R"(<Property id="MinusInf" type="Float32" value="-Inf"/>)"
+                                  R"(<Property id="LowerInf" type="Float64" value="inf"/>)"
+                                  R"(<Property id="MinusLowerInf" type="Float32" value="-inf"/>)"
+                                  R"x(<Property id="Complex" type="Complex64" value="(NaN,-inf)"/>)x");
+    EXPECT_EQ(standalone(opened, "Binary").value, property_value(std::uint8_t{0xA5}));
+    EXPECT_EQ(standalone(opened, "Octal").value, property_value(std::int16_t{511}));
+    EXPECT_EQ(standalone(opened, "Hexadecimal").value, property_value(std::numeric_limits<std::int64_t>::max()));
+    EXPECT_TRUE(std::isnan(standalone(opened, "NaN").value.get<double>()));
+    EXPECT_TRUE(std::isnan(standalone(opened, "LowerNan").value.get<float>()));
+    EXPECT_TRUE(std::isnan(standalone(opened, "MinusNan").value.get<double>()));
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(standalone(opened, "PlusInf").value, property_value(infinity));
+    EXPECT_EQ(standalone(opened, "MinusInf").value, property_value(-std::numeric_limits<float>::infinity()));
+    EXPECT_EQ(standalone(opened, "LowerInf").value, property_value(infinity));
+    EXPECT_EQ(standalone(opened, "MinusLowerInf").value, property_value(-std::numeric_limits<float>::infinity()));
+    const auto complex = standalone(opened, "Complex").value.get<std::complex<double>>();
+    EXPECT_TRUE(std::isnan(complex.real()));
+    EXPECT_EQ(complex.imag(), -infinity);
 }
 
 TEST(conformance_property_element, every_alternate_type_name)
@@ -471,6 +504,44 @@ TEST(conformance_property_element, a_reserved_identifier_with_another_type_is_to
     EXPECT_EQ(opened.properties.standalone.at("Instrument:ExposureTime").value, property_value(300.0));
 }
 
+TEST(conformance_property_element, a_reserved_time_point_written_as_a_string_is_read_as_the_time_point_it_holds)
+{
+    // Spec §11.5.3: Observation:Time:Start is a TimePoint. A String that holds one, the form in which PixInsight writes
+    // XISF:CreationTime, is read as the TimePoint, with an info diagnostic; a String that holds none is kept, with a
+    // warning.
+    const unit held =
+        open_body(R"(<Property id="Observation:Time:Start" type="String"> 2026-01-02T03:04:05.5Z </Property>)");
+    EXPECT_TRUE(single_diagnostic(held.diagnostics, severity::info, errc::reserved_property_type, "/xisf/Property[1]"));
+    EXPECT_EQ(held.diagnostics.front().context.attribute, "type");
+    EXPECT_EQ(held.properties.standalone.at("Observation:Time:Start").value,
+              property_value(date_time{
+                  .year = 2026, .month = 1, .day = 2, .hour = 3, .minute = 4, .second = 5, .nanosecond = 500'000'000}));
+    // As a TimePoint, it has no format specifier (spec §8.4.3.1): the String's is dropped, with a warning.
+    const unit formatted = open_body(
+        R"(<Property id="Observation:Time:Start" type="String" format="width:30">2026-01-02T03:04:05Z</Property>)");
+    ASSERT_EQ(formatted.diagnostics.size(), 2U) << openxisf::test::describe(formatted.diagnostics);
+    EXPECT_EQ(formatted.diagnostics[0].code, errc::reserved_property_type);
+    EXPECT_TRUE(single_diagnostic(std::span(formatted.diagnostics).subspan(1), severity::warning,
+                                  errc::invalid_format_specifier, "/xisf/Property[1]"));
+    const property& start = formatted.properties.standalone.at("Observation:Time:Start");
+    EXPECT_EQ(start.value.type(), property_type::time_point);
+    EXPECT_FALSE(start.format.has_value());
+    const unit other = open_body(R"(<Property id="Observation:Time:Start" type="String">dawn</Property>)");
+    EXPECT_TRUE(
+        single_diagnostic(other.diagnostics, severity::warning, errc::reserved_property_type, "/xisf/Property[1]"));
+    EXPECT_EQ(other.properties.standalone.at("Observation:Time:Start").value, property_value("dawn"));
+    // A String property of another reserved identifier, and the properties of an astrometric solution, whose types are
+    // checked as a set, are not converted.
+    const unit application = open_body(R"(<Property id="XISF:CreatorApplication" type="String">2026</Property>)");
+    EXPECT_TRUE(no_diagnostics(application.diagnostics));
+    const unit solution = open_body(openxisf::test::image_xml(
+        {}, R"(<Property id="AstrometricSolution:CreationTime" type="String">2026-01-02T03:04:05Z</Property>)"));
+    EXPECT_TRUE(single_diagnostic(solution.diagnostics, severity::warning, errc::reserved_property_type,
+                                  "/xisf/Image[1]/Property[1]"));
+    EXPECT_EQ(properties_of(solution, "/xisf/Image[1]").at("AstrometricSolution:CreationTime").value.type(),
+              property_type::string);
+}
+
 TEST(conformance_property_element, an_astrometric_solution_of_another_revision_has_types_of_its_own)
 {
     // Spec §11.5.3.7.6: a major revision of the namespace may change anything; the types of spec §11.5.3.7 are those of
@@ -627,18 +698,38 @@ TEST(conformance_property_element, the_data_loaded_at_open_is_limited)
         {compressed.data}, {.limits = {.max_ancillary_data = 999}});
     EXPECT_TRUE(
         single_diagnostic(large.diagnostics, severity::error, errc::ancillary_data_too_large, "/xisf/Property[1]"));
+
+    // A block that fails to load holds nothing, so it leaves the limit to the blocks after it.
+    const unit failed = open_with_blocks(R"(<Property id="A" type="ByteArray" length="16" location="attachment:{0}" )"
+                                         R"(checksum="sha1:0000000000000000000000000000000000000000"/>)"
+                                         R"(<Property id="B" type="ByteArray" length="16" location="attachment:{0}"/>)",
+                                         {block}, {.limits = {.max_ancillary_data = 24}});
+    EXPECT_TRUE(single_diagnostic(failed.diagnostics, severity::error, errc::checksum_mismatch, "/xisf/Property[1]"));
+    EXPECT_FALSE(failed.properties.standalone.contains("A"));
+    EXPECT_TRUE(failed.properties.standalone.contains("B"));
+
+    // So does a block that loads, but whose value is refused: a String that is not UTF-8.
+    const std::vector<std::byte> not_utf8(16, std::byte{0xFF});
+    const unit refused =
+        open_with_blocks(R"(<Property id="S" type="String" location="attachment:{0}"/>)"
+                         R"(<Property id="B" type="ByteArray" length="16" location="attachment:{1}"/>)",
+                         {not_utf8, block}, {.limits = {.max_ancillary_data = 24}});
+    EXPECT_TRUE(single_diagnostic(refused.diagnostics, severity::error, errc::invalid_utf8, "/xisf/Property[1]"));
+    EXPECT_FALSE(refused.properties.standalone.contains("S"));
+    EXPECT_TRUE(refused.properties.standalone.contains("B"));
 }
 
 TEST(conformance_property_element, the_copies_that_references_make_count_against_the_limit_of_loaded_data)
 {
     // A standalone String of 100 characters named by the References of two images: the root element and the first image
-    // take copies of 109 bytes each (with the identifier), and the second image takes the property itself. The copies
-    // cannot multiply the memory that a unit takes beyond the limit.
+    // take copies of the property and its 109 bytes each (with the identifier), and the second image takes the property
+    // itself. The copies cannot multiply the memory that a unit takes beyond the limit.
+    constexpr std::uint64_t copy = sizeof(property) + 109;
     const std::string body = R"(<Property id="Test:Text" uid="text" type="String">)" + std::string(100, 'a') +
                              "</Property>" + openxisf::test::image_xml({}, R"(<Reference ref="text"/>)") +
                              openxisf::test::image_xml({}, R"(<Reference ref="text"/>)");
-    EXPECT_TRUE(no_diagnostics(open_body(body, {.limits = {.max_ancillary_data = 218}}).diagnostics));
-    const unit limited = open_body(body, {.limits = {.max_ancillary_data = 217}});
+    EXPECT_TRUE(no_diagnostics(open_body(body, {.limits = {.max_ancillary_data = 2 * copy}}).diagnostics));
+    const unit limited = open_body(body, {.limits = {.max_ancillary_data = (2 * copy) - 1}});
     EXPECT_TRUE(single_diagnostic(limited.diagnostics, severity::error, errc::ancillary_data_too_large,
                                   "/xisf/Image[1]/Reference[1]"));
     EXPECT_TRUE(limited.properties.standalone.contains("Test:Text"));

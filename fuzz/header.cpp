@@ -9,8 +9,9 @@
 // returns exactly the data size of its image, or fails with an error of untrusted input. What describes the images
 // keeps the promises of the API: thumbnails hold their pixel data, tables one value of the type of each field in each
 // row, colour filter arrays a pattern of their size, and display functions and working spaces values in their ranges.
-// A header-only open, once its ancillary data are loaded, holds what the lenient open holds. Values compare by their
-// bits, since a NaN is not equal to itself.
+// A header-only open, once its ancillary data are loaded, holds what the lenient open holds. A signed unit returns its
+// signature and its root element as the input holds them, in valid UTF-8, and both modes return the same. Values
+// compare by their bits, since a NaN is not equal to itself.
 
 #include <openxisf/error.h>
 #include <openxisf/image.h>
@@ -27,10 +28,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -235,6 +238,24 @@ bool same_image(const openxisf::image_info& a, const openxisf::image_info& b)
     return x == y;
 }
 
+// The signature and the root element that it signs, which a signed unit returns as the input holds them.
+void check_signature(std::string_view input, const openxisf::reader& unit)
+{
+    const std::string_view signature = unit.signature_xml();
+    const std::string_view signed_element = unit.signed_xml();
+    const auto appears = [input](std::string_view part) {
+        return std::search(input.begin(), input.end(), std::boyer_moore_horspool_searcher(part.begin(), part.end())) !=
+               input.end();
+    };
+    require((unit.signature() == openxisf::signature_status::none) == signature.empty());
+    require(signature.empty() == signed_element.empty());
+    if (!signature.empty()) {
+        require(openxisf::detail::is_valid_utf8(signature) && openxisf::detail::is_valid_utf8(signed_element));
+        require(signature.starts_with('<') && signed_element.starts_with('<') && signed_element.ends_with('>'));
+        require(appears(signature) && appears(signed_element));
+    }
+}
+
 // A header-only open of the unit, once its ancillary data are loaded, holds what the lenient open holds.
 void check_header_only(std::span<const std::byte> data, const openxisf::reader& lenient)
 {
@@ -274,6 +295,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         require(openxisf::detail::is_valid_utf8(entry.context.element));
     }
     read_every_image(*lenient.unit);
+    check_signature(std::string_view(reinterpret_cast<const char*>(data), size), *lenient.unit);
     for (const openxisf::image_info& info : lenient.unit->images()) {
         check_description(info);
     }
@@ -290,6 +312,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     require(std::ranges::equal(found, strict.unit->diagnostics(), same));
     require(strict.unit->storage() == lenient.unit->storage());
     require(strict.unit->signature() == lenient.unit->signature());
+    require(strict.unit->signature_xml() == lenient.unit->signature_xml() &&
+            strict.unit->signed_xml() == lenient.unit->signed_xml());
     require(std::ranges::equal(strict.unit->images(), lenient.unit->images(), same_image));
     require(same_tables(strict.unit->tables(), lenient.unit->tables()));
     return 0;

@@ -4,10 +4,10 @@
 #include <openxisf/error.h>
 #include <openxisf/io.h>
 
-#include "core/quote.h"
-#include "core/utf8.h"
+#include "core/hex.h"
 #include "core/xoshiro.h"
 #include "io/native_file.h"
+#include "io/paths.h"
 #include "io/range_check.h"
 
 #include <memory>
@@ -18,16 +18,6 @@
 namespace openxisf {
 
 namespace {
-
-void check_path(std::string_view path)
-{
-    if (path.empty()) {
-        throw usage_error(errc::invalid_argument, "the path is empty");
-    }
-    if (!detail::is_valid_utf8(path)) {
-        throw usage_error(errc::invalid_utf8, detail::quote(path) + " is not a valid UTF-8 path");
-    }
-}
 
 // A name in the directory of target: .openxisf-<16 hexadecimal digits>.tmp. A fixed length keeps it within the limits
 // of the file system whatever the name of the target.
@@ -44,10 +34,7 @@ std::string temporary_path(std::string_view target, std::uint64_t random)
 #endif
     std::string path(target.substr(0, end == std::string_view::npos ? 0 : end + 1));
     path += ".openxisf-";
-    constexpr std::string_view hex_digits = "0123456789abcdef";
-    for (int shift = 60; shift >= 0; shift -= 4) {
-        path += hex_digits[(random >> static_cast<unsigned>(shift)) & 0xFU];
-    }
+    path += detail::fixed_width_hex(random);
     path += ".tmp";
     return path;
 }
@@ -62,7 +49,7 @@ struct file_source::state
 
 file_source::file_source(std::string_view path)
 {
-    check_path(path);
+    detail::check_path_argument(path, "the path");
     detail::native_file file = detail::native_file::open_for_reading(std::string(path));
     const std::uint64_t size = file.size();
     state_ = std::make_unique<const state>(state{.file = std::move(file), .size = size});
@@ -132,16 +119,24 @@ struct file_sink::state
 
 file_sink::file_sink(std::string_view path, file_sink_options options)
 {
-    check_path(path);
-    std::string target(path);
+    detail::check_path_argument(path, "the path");
+    // finish() replaces the file that the path names now, whatever the current directory is by then.
+    std::string target = detail::absolute_path(std::string(path));
     // A name taken by another file is tried again with another random number, which only a crowded directory needs.
     detail::xoshiro256starstar random = detail::xoshiro256starstar::from_random_device();
     for (int attempt = 0; attempt < 16; ++attempt) {
         std::string temporary = temporary_path(target, random());
         std::optional<detail::native_file> file = detail::native_file::create_new(temporary, target);
         if (file) {
-            state_ = std::make_unique<state>(std::move(target), std::move(temporary), std::move(*file),
-                                             options.flush_to_disk);
+            // The file exists from here, and must not stay behind when the state cannot be allocated. Nothing is moved
+            // before the allocation succeeds.
+            try {
+                state_ = std::make_unique<state>(std::move(target), std::move(temporary), std::move(*file),
+                                                 options.flush_to_disk);
+            } catch (...) {
+                file->discard(temporary);
+                throw;
+            }
             return;
         }
     }

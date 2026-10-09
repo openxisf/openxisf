@@ -4,6 +4,7 @@
 #include <openxisf/error.h>
 #include <openxisf/format.h>
 
+#include "core/hex.h"
 #include "core/text_grammar.h"
 #include "core/utc_time.h"
 
@@ -104,7 +105,7 @@ std::string digits_of(std::uint64_t high, std::uint64_t low, unsigned radix)
             part = static_cast<std::uint32_t>(current / radix);
             remainder = current % radix;
         }
-        result.push_back("0123456789abcdef"[remainder]);
+        result.push_back(detail::hex_digits[remainder]);
     } while (std::ranges::any_of(parts, [](std::uint32_t part) { return part != 0; }));
     std::ranges::reverse(result);
     return result;

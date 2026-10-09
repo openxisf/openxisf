@@ -117,6 +117,24 @@ TEST_P(orientation_of_a_3_by_2_image, normal_pixels_move_whole)
               turned);
 }
 
+TEST_P(orientation_of_a_3_by_2_image, samples_of_four_and_eight_bytes_move_whole)
+{
+    // Each byte of a sample differs from every other, so that a sample moved in pieces would show.
+    const oriented& expected = GetParam();
+    const geometry image{.dimensions = {3, 2}, .channels = 1};
+    for (const std::size_t size : {std::size_t{4}, std::size_t{8}}) {
+        std::vector<std::byte> samples(6 * size);
+        std::vector<std::byte> turned(6 * size);
+        for (std::size_t i = 0; i < 6; ++i) {
+            for (std::size_t k = 0; k < size; ++k) {
+                samples[(i * size) + k] = static_cast<std::byte>((i * 16) + k);
+                turned[(i * size) + k] = static_cast<std::byte>((std::size_t{expected.pixels[i]} * 16) + k);
+            }
+        }
+        EXPECT_EQ(openxisf::orient_pixels(samples, image, size, pixel_storage::planar, expected.turn), turned) << size;
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     all, orientation_of_a_3_by_2_image,
     testing::Values(

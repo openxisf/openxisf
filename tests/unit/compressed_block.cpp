@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <ostream>
 #include <span>
 #include <stdexcept>
@@ -415,6 +416,10 @@ TEST(compressed_block, a_block_that_decompresses_beyond_the_allocation_limit_is_
                                               [&block] { (void)decompressed(block, {.max_allocation = 999}); }));
     EXPECT_EQ(decompressed(block, {.max_allocation = 1000}).size(), 1000U);
     EXPECT_EQ(decompressed(block, {.max_allocation = 0}).size(), 1000U);
+    // Without a limit, a size that no allocation can hold fails as an allocation does.
+    block_compression huge = block.compression;
+    huge.uncompressed_size = std::uint64_t{1} << 63;
+    EXPECT_THROW((void)decompress_block(block.data, huge, {.max_allocation = 0}), std::bad_alloc);
 
     // Into memory of the caller, only a shuffled block needs a buffer of its size.
     std::vector<std::byte> destination(1000);
@@ -481,16 +486,19 @@ TEST(compressed_block, the_default_level_of_each_codec_has_an_abstract_level)
 
 TEST(compressed_block, the_level_reaches_the_codec)
 {
-    // Each higher level makes these data smaller, once they are shuffled.
+    // A higher level makes these data no larger, once they are shuffled, and the highest smaller than the lowest. Two
+    // levels next to each other may compress alike in another version of a codec.
     const std::vector<std::byte> data = samples(100'000);
     for (const compression_codec codec : {compression_codec::zlib, compression_codec::lz4hc, compression_codec::zstd}) {
-        std::size_t previous = std::numeric_limits<std::size_t>::max();
+        std::vector<std::size_t> sizes;
         for (const int level : {1, 50, 100}) {
             const compressed_block block = compress_block(data, {.codec = codec, .item_size = 2, .level = level});
-            EXPECT_LT(block.data.size(), previous) << name_of(codec) << " at " << level;
             EXPECT_EQ(decompressed(block), data);
-            previous = block.data.size();
+            sizes.push_back(block.data.size());
         }
+        EXPECT_LE(sizes[1], sizes[0]) << name_of(codec);
+        EXPECT_LE(sizes[2], sizes[1]) << name_of(codec);
+        EXPECT_LT(sizes[2], sizes[0]) << name_of(codec);
     }
     // The abstract level 1 is zlib's level 0, which stores the data in deflate's own blocks, larger than the data; so
     // the subblock is stored as it is.

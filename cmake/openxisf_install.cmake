@@ -38,6 +38,7 @@ write_basic_package_version_file(
 install(FILES
     "${PROJECT_BINARY_DIR}/openxisf-config.cmake"
     "${PROJECT_BINARY_DIR}/openxisf-config-version.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/openxisf-dependencies.cmake"
     DESTINATION "${OPENXISF_CONFIG_DIR}")
 install(FILES
     "${PROJECT_SOURCE_DIR}/cmake/Findlz4.cmake"
@@ -45,10 +46,25 @@ install(FILES
     DESTINATION "${OPENXISF_CONFIG_DIR}/modules")
 
 # pkg-config. The prefix is relative to the file, so the installed tree can be moved. Any absolute
-# directory will do as the root of the computation.
-file(RELATIVE_PATH OPENXISF_PC_PREFIX_RELPATH
-    "${PROJECT_BINARY_DIR}/prefix/${CMAKE_INSTALL_LIBDIR}/pkgconfig" "${PROJECT_BINARY_DIR}/prefix")
-string(REGEX REPLACE "/$" "" OPENXISF_PC_PREFIX_RELPATH "${OPENXISF_PC_PREFIX_RELPATH}")
+# directory will do as the root of the computation. GNUInstallDirs also allows absolute directories, which
+# are written as they are; when the library directory, where the file goes, is one, the prefix is that of
+# the installation, which cmake --install --prefix can change after the configuration: the file gets it
+# when it is installed.
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+    set(OPENXISF_PC_PREFIX "@OPENXISF_PC_INSTALL_PREFIX@")
+else()
+    file(RELATIVE_PATH relative_prefix
+        "${PROJECT_BINARY_DIR}/prefix/${CMAKE_INSTALL_LIBDIR}/pkgconfig" "${PROJECT_BINARY_DIR}/prefix")
+    string(REGEX REPLACE "/$" "" relative_prefix "${relative_prefix}")
+    set(OPENXISF_PC_PREFIX "\${pcfiledir}/${relative_prefix}")
+endif()
+foreach(directory LIBDIR INCLUDEDIR)
+    if(IS_ABSOLUTE "${CMAKE_INSTALL_${directory}}")
+        set(OPENXISF_PC_${directory} "${CMAKE_INSTALL_${directory}}")
+    else()
+        set(OPENXISF_PC_${directory} "\${prefix}/${CMAKE_INSTALL_${directory}}")
+    endif()
+endforeach()
 set(OPENXISF_PC_REQUIRES_PRIVATE "")
 set(OPENXISF_PC_CFLAGS "")
 if(NOT OPENXISF_SHARED)
@@ -63,11 +79,26 @@ if(NOT OPENXISF_SHARED)
     set(OPENXISF_PC_REQUIRES_PRIVATE "Requires.private: ${requires_list}")
     set(OPENXISF_PC_CFLAGS " -DOPENXISF_STATIC_DEFINE")
 endif()
+# The file names the library of the configuration that is installed, whose name ends with a d in a Debug build, so it is
+# generated for each configuration, which a multi-configuration generator knows only then. pkg-config has no
+# configurations: installed into one prefix, they share the file, which describes the last one installed.
+set(OPENXISF_PC_LIBRARY "$<TARGET_LINKER_FILE_BASE_NAME:openxisf>")
 configure_file(
     "${PROJECT_SOURCE_DIR}/cmake/openxisf.pc.in"
-    "${PROJECT_BINARY_DIR}/openxisf.pc"
+    "${PROJECT_BINARY_DIR}/openxisf.pc.genex"
     @ONLY)
-install(FILES "${PROJECT_BINARY_DIR}/openxisf.pc" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+set(pc_file "openxisf$<$<CONFIG:Debug>:-debug>.pc")
+file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/${pc_file}" INPUT "${PROJECT_BINARY_DIR}/openxisf.pc.genex")
+if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+    install(CODE "
+        set(OPENXISF_PC_INSTALL_PREFIX \"\${CMAKE_INSTALL_PREFIX}\")
+        configure_file(\"${PROJECT_BINARY_DIR}/${pc_file}\" \"${PROJECT_BINARY_DIR}/installed/${pc_file}\" @ONLY)")
+    install(FILES "${PROJECT_BINARY_DIR}/installed/${pc_file}" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+        RENAME openxisf.pc)
+else()
+    install(FILES "${PROJECT_BINARY_DIR}/${pc_file}" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+        RENAME openxisf.pc)
+endif()
 
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/NOTICE"
     DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/openxisf")

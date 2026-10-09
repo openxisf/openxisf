@@ -3,6 +3,8 @@
 
 #include "core/quote.h"
 
+#include "core/hex.h"
+
 #include <cstddef>
 
 namespace openxisf::detail {
@@ -10,7 +12,6 @@ namespace openxisf::detail {
 std::string quote(std::string_view text)
 {
     constexpr std::size_t max_length = 40;
-    constexpr std::string_view hex_digits = "0123456789abcdef";
 
     std::string quoted = "'";
     for (const char c : text.substr(0, max_length)) {

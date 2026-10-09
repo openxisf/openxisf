@@ -22,6 +22,11 @@ namespace {
 // The elements of a colour filter array (spec §11.10.1, Table 18).
 constexpr std::string_view cfa_elements = "0RGBWCMY";
 
+// The bytes of the header of an ICC profile (ICC.1:2022 §7.2), which holds the signature 'acsp' at byte 36.
+constexpr std::size_t icc_header_size = 128;
+constexpr std::size_t icc_signature_offset = 36;
+constexpr std::string_view icc_signature = "acsp";
+
 bool equals_ignoring_ascii_case(std::string_view text, std::string_view lowercase) noexcept
 {
     return std::ranges::equal(text, lowercase, [](char a, char b) {
@@ -79,6 +84,22 @@ bool is_fits_keyword_name(std::string_view name) noexcept
 bool is_commentary_keyword(std::string_view name) noexcept
 {
     return name.empty() || name == "COMMENT" || name == "HISTORY";
+}
+
+bool is_fits_keyword_text(std::string_view text) noexcept
+{
+    return std::ranges::all_of(text, [](char c) { return c >= ' ' && c <= '~'; });
+}
+
+bool has_icc_profile_header(std::span<const std::byte> profile) noexcept
+{
+    if (profile.size() < icc_header_size) {
+        return false;
+    }
+    const std::span<const std::byte> signature = profile.subspan(icc_signature_offset, icc_signature.size());
+    return std::ranges::equal(signature, icc_signature, [](std::byte stored, char expected) {
+        return stored == static_cast<std::byte>(expected);
+    });
 }
 
 std::optional<double> parse_gamma(std::string_view text)

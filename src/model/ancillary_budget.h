@@ -36,6 +36,9 @@ public:
     /// beyond the limit, which is an error in log about context, and nothing is counted.
     [[nodiscard]] bool copy(std::uint64_t cost, std::string_view what, error_context context, diagnostic_log& log);
 
+    /// Gives back cost bytes counted by load() for a data block that could not be loaded, or whose data were refused.
+    void release(std::uint64_t cost) noexcept;
+
 private:
     [[nodiscard]] bool fits(std::uint64_t cost) const noexcept;
 
@@ -43,8 +46,12 @@ private:
     std::uint64_t used_ = 0;
 };
 
-/// The data of an available block, decompressed, loaded within the budget, which counts the larger of its stored and
-/// its data size. Nothing when it cannot be read, which is an error in log about the element at path. What the source
+/// What a data block counts against the budget when it is loaded: the larger of its stored and its data size, which
+/// the load holds at once.
+[[nodiscard]] std::uint64_t block_cost(const block_descriptor& descriptor) noexcept;
+
+/// The data of an available block, decompressed, loaded within the budget, which counts its block_cost(). Nothing when
+/// it cannot be read, which is an error in log about the element at path, and costs nothing then. What the source
 /// throws passes through.
 [[nodiscard]] std::optional<std::vector<std::byte>> load_block(const thread_safe_source& source,
                                                                const block_descriptor& descriptor, const limits& limits,

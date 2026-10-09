@@ -55,16 +55,21 @@ std::unique_ptr<openxisf::input_source> unit_of(std::string_view header)
     return std::make_unique<openxisf::memory_source>(std::move(unit));
 }
 
-// The reader across the boundary: a unit opened with its diagnostics, and a unit refused with an exception caught by
-// its type.
+// The reader across the boundary: a signed unit opened with its diagnostics and its signature, and a unit refused with
+// an exception caught by its type.
 bool opens_units_through_the_library()
 {
-    const openxisf::reader file(unit_of(R"(<?xml version="1.0" encoding="UTF-8"?><xisf version="1.0" )"
-                                        R"(xmlns="http://www.pixinsight.com/xisf"><Metadata/><Unknown/></xisf>)"));
+    constexpr std::string_view root = R"(<xisf version="1.0" xmlns="http://www.pixinsight.com/xisf">)"
+                                      R"(<Metadata/><Unknown/></xisf>)";
+    constexpr std::string_view signature = R"(<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"/>)";
+    const openxisf::reader file(
+        unit_of(R"(<?xml version="1.0" encoding="UTF-8"?>)" + std::string(root) + std::string(signature)));
     const auto unknown = [](const openxisf::diagnostic& entry) {
         return entry.code == openxisf::errc::unknown_element && entry.context.element == "/xisf/Unknown[1]";
     };
-    if (file.storage() != openxisf::unit_storage::monolithic || !std::ranges::any_of(file.diagnostics(), unknown)) {
+    if (file.storage() != openxisf::unit_storage::monolithic || !std::ranges::any_of(file.diagnostics(), unknown) ||
+        file.signature() != openxisf::signature_status::not_verified || file.signature_xml() != signature ||
+        file.signed_xml() != root) {
         return false;
     }
     try {
@@ -210,14 +215,11 @@ bool reads_distributed_units_through_the_library()
     if (file.storage() != openxisf::unit_storage::distributed || file.read_pixels<std::uint16_t>(0) != samples) {
         return false;
     }
+    // Refused before the file system is asked about it: absolute paths are not allowed by default.
     try {
-        (void)openxisf::file_resolver(".")(
-            {.form = openxisf::location_form::relative_path, .location = "../unit.xisb"});
+        (void)openxisf::file_resolver(".")({.form = openxisf::location_form::absolute_path, .location = "/unit.xisb"});
     } catch (const openxisf::unsupported_error& failure) {
         return failure.code() == openxisf::errc::location_not_allowed;
-    } catch (const openxisf::io_error& failure) {
-        // The working directory has no parent with that file.
-        return failure.code() == openxisf::errc::open_failed;
     }
     return false;
 }

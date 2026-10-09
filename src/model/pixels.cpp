@@ -5,6 +5,7 @@
 
 #include <openxisf/error.h>
 
+#include "core/allocation.h"
 #include "model/pixel_layout.h"
 
 #include <cstdint>
@@ -120,7 +121,7 @@ void read_pixels(const unit& opened, std::size_t index, std::span<std::byte> des
     }
 }
 
-std::size_t typed_sample_count(const unit& opened, std::size_t index, sample_format format)
+const image_info& typed_image_at(const unit& opened, std::size_t index, sample_format format)
 {
     const image_info& info = image_at(opened, index);
     if (info.sample_format != format) {
@@ -128,13 +129,14 @@ std::size_t typed_sample_count(const unit& opened, std::size_t index, sample_for
                                                       std::string(sample_format_name(info.sample_format)) +
                                                       " values, not " + std::string(sample_format_name(format)));
     }
+    return info;
+}
+
+std::size_t typed_sample_count(const unit& opened, std::size_t index, sample_format format)
+{
+    const image_info& info = typed_image_at(opened, index, format);
     const std::uint64_t size = info.data_size();
-    if (opened.limits.max_allocation != 0 && size > opened.limits.max_allocation) {
-        throw limit_error(errc::allocation_too_large, "the pixel data of image " + std::to_string(index) + " have " +
-                                                          std::to_string(size) +
-                                                          " bytes, more than the allocation limit of " +
-                                                          std::to_string(opened.limits.max_allocation));
-    }
+    check_allocation(size, opened.limits, "the pixel data of image " + std::to_string(index) + " have");
     return info.geometry.sample_count();
 }
 

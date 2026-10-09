@@ -29,7 +29,9 @@ namespace openxisf::detail {
 /// file is read once, for the identifiers that the blocks name (read_block_index()). A block that cannot be located
 /// becomes unavailable, with an error in log about its location attribute:
 /// - no resolver, a null source, the io_error or unsupported_error of the resolver or of the source, more files than
-///   limits.max_external_files, and a data blocks file that cannot be read or whose index is malformed;
+///   limits.max_external_files, and a data blocks file that cannot be read or whose index is malformed; the block keeps
+///   the class and the system error of an exception of the resolver, and the io_error of the source, for a read of it
+///   (data_block::origin), and so does the exception of a strict log;
 /// - an index-id that no element has, or only a free one, or that several elements have;
 /// - an element whose block is not inside the file after its first 16 bytes, whose uncompressed length is not zero
 ///   for an uncompressed block, or differs from the uncompressed size of a compressed one;

@@ -159,6 +159,9 @@ TEST(property_value, float128_and_complex128_scalars_are_kept_as_text)
     const property_value complex = property_value::from_complex128_text("(1e4000,-2)");
     EXPECT_EQ(complex.type(), property_type::complex128);
     EXPECT_EQ(complex.get<std::string>(), "(1e4000,-2)");
+    // Without the white space around the value and its parts, which encoders do not write (spec §8.3.5).
+    EXPECT_EQ(property_value::from_float128_text(" 1.5\t").get<std::string>(), "1.5");
+    EXPECT_EQ(property_value::from_complex128_text(" ( 1.5 , -2 )\n").get<std::string>(), "(1.5,-2)");
 
     EXPECT_TRUE(throws<usage_error>(errc::invalid_argument, [] { (void)property_value::from_float128_text("x"); }));
     EXPECT_TRUE(

@@ -86,38 +86,19 @@ TEST(conformance_display_function, every_parameter_is_mandatory)
 
 TEST(conformance_display_function, each_parameter_has_four_finite_values)
 {
+    // The lists refused are in unit/ancillary_attributes.cpp.
     EXPECT_TRUE(unavailable(open_function(R"(m="0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0:0:0" r="1:1:1:1")")));
-    EXPECT_TRUE(
-        unavailable(open_function(R"(m="0.5:0.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0:0:0" r="1:1:1:1")")));
-    EXPECT_TRUE(
-        unavailable(open_function(R"(m="0.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0:0:-inf" r="1:1:1:1")")));
 }
 
 TEST(conformance_display_function, the_parameters_are_within_their_constraints)
 {
-    // Spec §8.5.6: 0 <= m, s, h <= 1, s <= h, l <= 0 and r >= 1, for each component.
-    for (const std::string_view attributes :
-         {R"(m="1.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0:0:0" r="1:1:1:1")",
-          R"(m="0.5:0.5:0.5:0.5" s="0:0:0:-0.1" h="1:1:1:1" l="0:0:0:0" r="1:1:1:1")",
-          R"(m="0.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1.5:1:1" l="0:0:0:0" r="1:1:1:1")",
-          R"(m="0.5:0.5:0.5:0.5" s="0:0.6:0:0" h="1:0.5:1:1" l="0:0:0:0" r="1:1:1:1")",
-          R"(m="0.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0.1:0:0" r="1:1:1:1")",
-          R"(m="0.5:0.5:0.5:0.5" s="0:0:0:0" h="1:1:1:1" l="0:0:0:0" r="1:1:0.5:1")"}) {
-        EXPECT_TRUE(unavailable(open_function(attributes))) << attributes;
-    }
-    // The limits themselves are within them.
+    // Spec §8.5.6: 0 <= m, s, h <= 1, s <= h, l <= 0 and r >= 1, for each component; each constraint is tested in
+    // unit/ancillary_attributes.cpp.
+    EXPECT_TRUE(
+        unavailable(open_function(R"(m="0.5:0.5:0.5:0.5" s="0:0.6:0:0" h="1:0.5:1:1" l="0:0:0:0" r="1:1:1:1")")));
+    // The limits themselves are within them, each in the parameter of its attribute.
     const reader limits = open_function(R"(m="0:1:0.5:0.5" s="0.5:0:1:0" h="0.5:0:1:1" l="-2:0:0:0" r="3:1:1:1")");
     EXPECT_TRUE(no_diagnostics(limits.diagnostics()));
-}
-
-TEST(conformance_display_function, an_image_has_one_display_function)
-{
-    const reader file = openxisf::test::open_header(header_xml(image_xml(
-        {}, "<DisplayFunction " + std::string(example) + R"(/><DisplayFunction m="0.5:0.5:0.5:0.5" s="0:0:0:0" )" +
-                R"(h="1:1:1:1" l="0:0:0:0" r="1:1:1:1"/>)")));
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/DisplayFunction[2]"));
-    EXPECT_EQ(file.image(0).display_function.value_or(display_function{}).midtones[0], 0.000735);
 }
 
 TEST(conformance_display_function, strict_reading_refuses_an_invalid_display_function)

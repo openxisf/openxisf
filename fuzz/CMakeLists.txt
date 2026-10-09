@@ -4,14 +4,19 @@
 # Fuzz targets. When OPENXISF_SANITIZE holds "fuzzer" (Clang), each one is a libFuzzer program, and its test fuzzes for
 # OPENXISF_FUZZ_SECONDS from the committed seeds in seeds/<name>. Otherwise it is linked with a replay driver, and its
 # test runs the seeds once, so that the regression corpus runs on every platform. Both kinds of test have the label
-# fuzz.
+# fuzz. With OPENXISF_FUZZING_ENGINE, each target is linked with that engine instead, as OSS-Fuzz builds them
+# (oss-fuzz/build.sh): the instrumentation comes from CMAKE_CXX_FLAGS, and no test runs them.
 
 set(OPENXISF_FUZZ_SECONDS 60 CACHE STRING "How long the test of each libFuzzer target fuzzes, in seconds")
+set(OPENXISF_FUZZING_ENGINE "" CACHE STRING
+    "Link the fuzz targets with this fuzzing engine, a flag such as -fsanitize=fuzzer or a library, with the instrumentation of CMAKE_CXX_FLAGS, as OSS-Fuzz builds them; no test runs them then")
 
-if("fuzzer" IN_LIST OPENXISF_SANITIZE)
-    set(libfuzzer ON)
+if(OPENXISF_FUZZING_ENGINE)
+    set(mode engine)
+elseif("fuzzer" IN_LIST OPENXISF_SANITIZE)
+    set(mode libfuzzer)
 else()
-    set(libfuzzer OFF)
+    set(mode replay)
     add_library(openxisf_fuzz_replay OBJECT replay.cpp)
     set_target_properties(openxisf_fuzz_replay PROPERTIES CXX_EXTENSIONS OFF)
     target_compile_features(openxisf_fuzz_replay PRIVATE cxx_std_20)
@@ -40,7 +45,11 @@ function(openxisf_add_fuzz_target name)
         openxisf_enable_hardening(${name})
     endif()
 
-    if(libfuzzer)
+    if(mode STREQUAL "engine")
+        target_link_libraries(${name} PRIVATE ${OPENXISF_FUZZING_ENGINE})
+        return()
+    endif()
+    if(mode STREQUAL "libfuzzer")
         # The sanitizer flags give every target the instrumentation; this links the libFuzzer main program.
         target_compile_options(${name} PRIVATE -fsanitize=fuzzer)
         target_link_options(${name} PRIVATE -fsanitize=fuzzer)

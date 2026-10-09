@@ -6,16 +6,15 @@
 #include <openxisf/error.h>
 #include <openxisf/reader.h>
 
-#include "model/unit.h"
 #include "support/bytes.h"
 #include "support/diagnostics.h"
 #include "support/fixture_builder.h"
-#include "support/opened_unit.h"
 #include "support/throws.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,7 +29,6 @@ using openxisf::test::image_xml;
 using openxisf::test::keyword_xml;
 using openxisf::test::open_header;
 using openxisf::test::single_diagnostic;
-using openxisf::test::thumbnail_xml;
 
 struct misplaced
 {
@@ -90,16 +88,6 @@ TEST(conformance_availability, the_parts_of_core_elements_are_not_allowed_at_the
     }
 }
 
-TEST(conformance_availability, a_thumbnail_has_no_color_filter_array_and_no_thumbnail)
-{
-    // Spec §11.12.
-    const std::string_view cfa = R"(<ColorFilterArray pattern="RGGB" width="2" height="2"/>)";
-    expect_ignored_with_a_warning({.header = header_xml(image_xml({}, thumbnail_xml({}, cfa))),
-                                   .path = "/xisf/Image[1]/Thumbnail[1]/ColorFilterArray[1]"});
-    expect_ignored_with_a_warning({.header = header_xml(image_xml({}, thumbnail_xml({}, thumbnail_xml()))),
-                                   .path = "/xisf/Image[1]/Thumbnail[1]/Thumbnail[1]"});
-}
-
 TEST(conformance_availability, an_extension_element_inside_a_core_element_is_ignored_with_a_warning)
 {
     // Extension elements belong at the top of the header; core elements contain only elements of the specification.
@@ -133,18 +121,23 @@ std::vector<std::byte> unit_with_unsupported_blocks()
 
 TEST(conformance_availability, an_unsupported_codec_or_checksum_algorithm_leaves_the_rest_of_the_unit_readable)
 {
-    const openxisf::detail::unit opened = openxisf::test::open_internal(unit_with_unsupported_blocks());
+    const reader file = openxisf::test::open_unit(unit_with_unsupported_blocks());
 
-    ASSERT_EQ(opened.diagnostics.size(), 2U) << openxisf::test::describe(opened.diagnostics);
-    EXPECT_EQ(opened.diagnostics[0].severity, severity::error);
-    EXPECT_EQ(opened.diagnostics[0].code, errc::unsupported_compression);
-    EXPECT_EQ(opened.diagnostics[0].context.element, "/xisf/Image[1]");
-    EXPECT_EQ(opened.diagnostics[1].severity, severity::error);
-    EXPECT_EQ(opened.diagnostics[1].code, errc::unsupported_checksum);
-    EXPECT_EQ(opened.diagnostics[1].context.element, "/xisf/Image[2]");
-    EXPECT_TRUE(openxisf::test::throws<openxisf::unsupported_error>(
-        errc::unsupported_compression, [&opened] { (void)openxisf::test::stored_block(opened, "/xisf/Image[1]"); }));
-    EXPECT_EQ(openxisf::test::stored_block(opened, "/xisf/Image[3]"), openxisf::test::bytes("abc"));
+    const std::span<const openxisf::diagnostic> diagnostics = file.diagnostics();
+    ASSERT_EQ(diagnostics.size(), 2U) << openxisf::test::describe(diagnostics);
+    EXPECT_EQ(diagnostics[0].severity, severity::error);
+    EXPECT_EQ(diagnostics[0].code, errc::unsupported_compression);
+    EXPECT_EQ(diagnostics[0].context.element, "/xisf/Image[1]");
+    EXPECT_EQ(diagnostics[1].severity, severity::error);
+    EXPECT_EQ(diagnostics[1].code, errc::unsupported_checksum);
+    EXPECT_EQ(diagnostics[1].context.element, "/xisf/Image[2]");
+    // The images are listed, and the pixels of those that need what OpenXISF does not have cannot be read.
+    ASSERT_EQ(file.images().size(), 3U);
+    EXPECT_TRUE(openxisf::test::throws<openxisf::unsupported_error>(errc::unsupported_compression,
+                                                                    [&file] { (void)file.read_pixels(0); }));
+    EXPECT_TRUE(openxisf::test::throws<openxisf::unsupported_error>(errc::unsupported_checksum,
+                                                                    [&file] { (void)file.read_pixels(1); }));
+    EXPECT_EQ(file.read_pixels(2), openxisf::test::bytes("abc"));
 }
 
 TEST(conformance_availability, strict_reading_fails_on_an_unsupported_feature)

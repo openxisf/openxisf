@@ -37,9 +37,19 @@ bool ancillary_budget::copy(std::uint64_t cost, std::string_view what, error_con
     return true;
 }
 
+void ancillary_budget::release(std::uint64_t cost) noexcept
+{
+    used_ -= cost;
+}
+
 bool ancillary_budget::fits(std::uint64_t cost) const noexcept
 {
     return limit_ == 0 || cost <= limit_ - used_;
+}
+
+std::uint64_t block_cost(const block_descriptor& descriptor) noexcept
+{
+    return std::max(stored_size(descriptor), data_size(descriptor));
 }
 
 std::optional<std::vector<std::byte>> load_block(const thread_safe_source& source, const block_descriptor& descriptor,
@@ -50,7 +60,9 @@ std::optional<std::vector<std::byte>> load_block(const thread_safe_source& sourc
     if (descriptor.location.kind == location_kind::attachment) {
         context.offset = descriptor.location.position;
     }
-    if (!budget.load(std::max(stored_size(descriptor), data_size(descriptor)), context, log)) {
+    // Counted before the read, which holds that much memory.
+    const std::uint64_t cost = block_cost(descriptor);
+    if (!budget.load(cost, context, log)) {
         return std::nullopt;
     }
     try {
@@ -64,6 +76,8 @@ std::optional<std::vector<std::byte>> load_block(const thread_safe_source& sourc
     } catch (const invalid_data_error& failure) {
         log.error(failure.code(), failure.what(), std::move(context));
     }
+    // Nothing is held, so a block that fails takes no room from those after it.
+    budget.release(cost);
     return std::nullopt;
 }
 

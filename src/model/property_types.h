@@ -25,6 +25,10 @@ enum class type_category : std::uint8_t
     matrix,     ///< In a data block, with rows and columns attributes (spec §11.1.9).
 };
 
+/// True when type is an enumerator of property_type. A cast from an integer can give any other value, for which the
+/// functions of this file read no entry: the name is empty, and the other results have no meaning.
+[[nodiscard]] bool is_property_type(property_type type) noexcept;
+
 /// The name of a type in the specification, such as "Float32"; property_type_name() of the public API.
 [[nodiscard]] std::string_view type_name(property_type type) noexcept;
 

@@ -49,7 +49,9 @@ struct read_options
     /// Read the header alone: leave the ancillary data in data blocks unloaded, so that nothing but the header is read,
     /// and for a distributed unit the block indexes of its data blocks files. ICC profiles and the pixels of thumbnails
     /// stay empty, and the properties and tables with values in data blocks are left out, until
-    /// reader::load_ancillary_data() loads them; the problems of those data are found then.
+    /// reader::load_ancillary_data() loads them; the problems of those data are found then. Their identifiers are
+    /// known: another property or table of the object with one of them is refused, as a full open refuses it, and a
+    /// mandatory metadata property left out is not reported missing.
     bool header_only = false;
     /// Opens the files of the external data blocks of a distributed unit (spec §10.2). When it is empty, a unit opened
     /// from a path gets file_resolver() for the directory of that path, with its default options, and a unit opened
@@ -88,7 +90,15 @@ struct pixel_read_options
 /// limits::max_ancillary_data: ICC profiles, the pixels of thumbnails, and the values of properties and table cells
 /// (read_options::header_only defers them). Pixel data are read on request, with read_pixels().
 /// Problems confined to one object of the unit do not fail it: the object is unavailable, and a diagnostic says why
-/// (spec §7).
+/// (spec §7). A signed unit is read like any other; its signature is returned, not verified (signature()).
+///
+/// The reader refuses what affects safety or the meaning of the data, and reads departures from the specification that
+/// are unambiguous and harmless with a warning: among others, hexadecimal digits in uppercase, codec and checksum
+/// algorithm names in another case than the specification's, and characters that XML 1.0 does not allow, such as
+/// control characters other than tab, line feed and carriage return, which are kept as written. A compressed block or
+/// subblock whose compressed size equals its uncompressed size is read as stored, without decompression, as PixInsight
+/// writes and reads a subblock that its codec did not make smaller (write_options::subblock_size); the specification
+/// does not say so, so codec output of exactly the size of its input, from another encoder, is not decoded.
 ///
 /// The reader owns its source, so a file stays open as long as its reader exists. Its const member functions can be
 /// called from any number of threads at once, pixel reads included; load_ancillary_data(), the only function that
@@ -121,8 +131,26 @@ public:
     /// How the unit is stored.
     [[nodiscard]] unit_storage storage() const noexcept;
 
-    /// Whether the unit is signed.
+    /// Whether the unit is signed: whether an XML signature follows its root element (spec §9.5). OpenXISF reads a
+    /// signed unit like any other, and does not verify its signature: signature_xml() and signed_xml() give the
+    /// application what XML signature tooling of its own needs to verify it. A signature that is malformed, or that
+    /// does not name the root element, still makes the unit signed, with a warning (errc::invalid_signature), and
+    /// does not prevent reading the rest of it. A Signature element whose own start tag is not well-formed is not
+    /// taken for a signature, since the namespace declared there cannot be read: the unit is then not signed, with a
+    /// warning (errc::invalid_xml).
     [[nodiscard]] signature_status signature() const noexcept;
+
+    /// The signature of a signed unit: its Signature element, exactly as written in the header, from the '<' of its
+    /// start tag to the '>' of its end tag. A signature that is not well-formed XML extends as far as the nesting of
+    /// its tags goes. Empty when the unit is not signed.
+    [[nodiscard]] std::string_view signature_xml() const noexcept;
+
+    /// What the signature of a signed unit covers: the XISF root element, exactly as written in the header, from the
+    /// '<' of its start tag to the '>' of its end tag (spec §9.5). The signature names it by its id attribute, an
+    /// identifier for XML signature tooling, and covers the data blocks stored outside the header through their
+    /// checksums, which the reader verifies when it reads the blocks; a block of a signed unit without one is a
+    /// warning (errc::missing_checksum). Empty when the unit is not signed.
+    [[nodiscard]] std::string_view signed_xml() const noexcept;
 
     /// The properties of the unit: those of its Metadata element, such as XISF:CreationTime (spec §11.4).
     [[nodiscard]] const property_list& metadata() const noexcept;
@@ -134,10 +162,11 @@ public:
     [[nodiscard]] std::span<const table> tables() const noexcept;
 
     /// The images of the unit (spec §11.5), in document order: each Image element, and the image that each Reference
-    /// element of the root element names, listed again where the Reference is (spec §11.13). An Image element whose
-    /// attributes cannot be read is left out, with an error diagnostic. An image is listed even when its data block is
-    /// unavailable, for example compressed with a codec that OpenXISF does not support; read_pixels() then throws the
-    /// error of that diagnostic.
+    /// element of the root element names, listed again where the Reference is (spec §11.13). An image listed again
+    /// keeps its id, and the writer refuses two images with one id (errc::duplicate_image_id): leave the copy out, or
+    /// clear its id, to write the images again. An Image element whose attributes cannot be read is left out, with an
+    /// error diagnostic. An image is listed even when its data block is unavailable, for example compressed with a
+    /// codec that OpenXISF does not support; read_pixels() then throws the error of that diagnostic.
     [[nodiscard]] std::span<const image_info> images() const noexcept;
 
     /// The image at index in images().
@@ -149,7 +178,8 @@ public:
     /// @throws usage_error when index is out of range.
     /// @throws integrity_error when the data fail their checksum or do not decompress to their size.
     /// @throws unsupported_error, invalid_data_error or limit_error when the data block of the image is unavailable, or
-    ///         larger than limits::max_allocation, with the code of the error diagnostic about it.
+    ///         larger than limits::max_allocation, with the code of the error diagnostic about it; and io_error or
+    ///         unsupported_error, with that code, when the resolver could not open the external file of the block.
     /// @throws cancelled_error when options.progress returns false.
     /// @throws io_error, or what a custom source throws, when the source fails.
     [[nodiscard]] std::vector<std::byte> read_pixels(std::size_t index, const pixel_read_options& options = {}) const;
@@ -179,7 +209,7 @@ public:
     template <pixel_sample T>
     void read_pixels(std::size_t index, std::span<T> destination, const pixel_read_options& options = {}) const
     {
-        (void)sample_count_of(index, sample_format_of<T>());
+        check_sample_format(index, sample_format_of<T>());
         read_pixels(index, std::as_writable_bytes(destination), options);
     }
 
@@ -191,7 +221,10 @@ public:
 
     /// Loads what read_options::header_only left out: the reader then holds what an open without it gives, its
     /// diagnostics included. It reads the unit from its source again, so it fails like an open, with the options of the
-    /// open; the reader is unchanged when it throws. It does nothing when the data are loaded.
+    /// open; the reader is unchanged when it throws. It does nothing when the data are loaded. For a distributed unit,
+    /// it opens the external files again, through the resolver, before it closes those of the open, so up to twice
+    /// limits::max_external_files of them are open meanwhile; the blocks of a file that cannot be opened again are
+    /// unavailable afterwards, with a diagnostic.
     ///
     /// It changes the reader, so no other function may be called on it at the same time, and the references, pointers
     /// and spans that the reader returned before are invalid afterwards.
@@ -201,6 +234,10 @@ private:
     // The number of samples of the image at index, after checking that it has the given sample format and that its
     // pixel data fit in limits::max_allocation, so that a typed read can allocate them.
     [[nodiscard]] std::size_t sample_count_of(std::size_t index, sample_format format) const;
+
+    // Checks that the image at index has the given sample format, for a typed read into memory of the caller, which
+    // allocates nothing.
+    void check_sample_format(std::size_t index, sample_format format) const;
 
     struct state;
     std::unique_ptr<state> state_;

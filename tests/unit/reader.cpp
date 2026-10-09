@@ -5,6 +5,7 @@
 #include <openxisf/io.h>
 #include <openxisf/reader.h>
 
+#include "core/data_encoding.h"
 #include "support/bytes.h"
 #include "support/diagnostics.h"
 #include "support/faulty_io.h"
@@ -111,14 +112,16 @@ TEST(reader, the_limits_of_the_options_apply)
 std::vector<std::byte> unit_with_ancillary_data()
 {
     const std::string body =
-        openxisf::test::image_xml(
-            {}, R"(<ICCProfile location="inline:base64">YWNzcA==</ICCProfile>)" + openxisf::test::thumbnail_xml() +
-                    R"(<Property id="Vector" type="UI8Vector" length="2" location="attachment:{0}"/>)"
-                    R"(<Property id="Text" type="String">text</Property>)"
-                    R"(<Table id="InBlock"><Structure><Field id="f" type="String"/></Structure>)"
-                    R"(<Row><Cell location="inline:base64">YQ==</Cell></Row></Table>)"
-                    R"(<Table id="Plain"><Structure><Field id="f" type="String"/></Structure>)"
-                    R"(<Row><Cell>a</Cell></Row></Table>)") +
+        openxisf::test::image_xml({},
+                                  R"(<ICCProfile location="inline:base64">)" +
+                                      openxisf::detail::encode_base64(openxisf::test::icc_profile()) + "</ICCProfile>" +
+                                      openxisf::test::thumbnail_xml() +
+                                      R"(<Property id="Vector" type="UI8Vector" length="2" location="attachment:{0}"/>)"
+                                      R"(<Property id="Text" type="String">text</Property>)"
+                                      R"(<Table id="InBlock"><Structure><Field id="f" type="String"/></Structure>)"
+                                      R"(<Row><Cell location="inline:base64">YQ==</Cell></Row></Table>)"
+                                      R"(<Table id="Plain"><Structure><Field id="f" type="String"/></Structure>)"
+                                      R"(<Row><Cell>a</Cell></Row></Table>)") +
         R"(<Property id="Corrupt" type="UI8Vector" length="2" location="attachment:{1}" )"
         R"(checksum="sha1:0000000000000000000000000000000000000000"/>)";
     return openxisf::test::file_with_attachments(header_xml(body), {bytes("\x01\x02"), bytes("\x03\x04")});
@@ -142,6 +145,34 @@ TEST(reader, a_header_only_open_leaves_the_ancillary_data_in_data_blocks)
     EXPECT_TRUE(file.properties().empty());
 }
 
+TEST(reader, a_header_only_open_keeps_the_identifiers_of_the_values_that_it_leaves_out)
+{
+    // A value left in its data block holds the place of its property or table: the mandatory metadata are all there,
+    // and a property or table with its identifier is refused, as a full open refuses it after the first one.
+    const std::string body =
+        std::string(R"(<Metadata><Property id="XISF:CreationTime" type="TimePoint" value="2026-10-06T00:00:00Z"/>)"
+                    R"(<Property id="XISF:CreatorApplication" type="String" location="inline:base64">YQ==</Property>)"
+                    R"(</Metadata>)") +
+        openxisf::test::image_xml({}, R"(<Property id="A" type="String" location="inline:base64">YQ==</Property>)"
+                                      R"(<Property id="A" type="String">b</Property>)"
+                                      R"(<Table id="A"><Structure><Field id="f" type="String"/></Structure></Table>)"
+                                      R"(<Table id="T"><Structure><Field id="f" type="String"/></Structure>)"
+                                      R"(<Row><Cell location="inline:base64">YQ==</Cell></Row></Table>)"
+                                      R"(<Table id="T"><Structure><Field id="f" type="String"/></Structure></Table>)") +
+        R"(<Property id="S" type="String" location="inline:base64">YQ==</Property>)"
+        R"(<Table id="S"><Structure><Field id="f" type="String"/></Structure></Table>)";
+    const std::string header =
+        std::string(openxisf::test::xml_declaration) + std::string(openxisf::test::root_start_tag) + body + "</xisf>";
+    const reader full = open_header(header);
+    const reader partial = open_header(header, {.header_only = true});
+    ASSERT_EQ(full.diagnostics().size(), 4U) << openxisf::test::describe(full.diagnostics());
+    EXPECT_EQ(openxisf::test::describe(partial.diagnostics()), openxisf::test::describe(full.diagnostics()));
+    EXPECT_EQ(partial.metadata().size(), 1U);
+    EXPECT_FALSE(partial.image(0).properties.contains("A"));
+    EXPECT_TRUE(partial.image(0).tables.empty());
+    EXPECT_TRUE(partial.tables().empty());
+}
+
 TEST(reader, loading_the_ancillary_data_gives_what_a_full_open_gives)
 {
     reader file = openxisf::test::open_unit(unit_with_ancillary_data(), {.header_only = true});
@@ -150,7 +181,7 @@ TEST(reader, loading_the_ancillary_data_gives_what_a_full_open_gives)
     const reader full = openxisf::test::open_unit(unit_with_ancillary_data());
     EXPECT_TRUE(full.ancillary_data_loaded());
     EXPECT_EQ(file.image(0), full.image(0));
-    EXPECT_EQ(file.image(0).icc_profile, bytes("acsp"));
+    EXPECT_EQ(file.image(0).icc_profile, openxisf::test::icc_profile());
     EXPECT_EQ(file.image(0).tables.size(), 2U);
     EXPECT_EQ(file.properties(), full.properties());
     // The checksum of the corrupt property fails now, as it does in a full open.
@@ -171,6 +202,52 @@ TEST(reader, loading_the_ancillary_data_fails_like_an_open_and_leaves_the_reader
     EXPECT_FALSE(file.ancillary_data_loaded());
     EXPECT_TRUE(file.image(0).icc_profile.empty());
     EXPECT_TRUE(no_diagnostics(file.diagnostics()));
+}
+
+TEST(reader, a_failure_of_the_source_while_loading_the_ancillary_data_leaves_the_reader_unchanged)
+{
+    // Each read of the load fails in each way: the exception of the source passes through, and the reader is as the
+    // header-only open left it. The source works again afterwards, and so does the load.
+    using openxisf::test::fault;
+    using openxisf::test::faulty_source;
+    const openxisf::memory_source unit(unit_with_ancillary_data());
+    std::size_t open_reads = 0;
+    std::size_t load_reads = 0;
+    {
+        // A source that never fails counts the reads.
+        auto source = std::make_unique<faulty_source>(unit, 0, fault::error);
+        const faulty_source& counter = *source;
+        reader file(std::move(source), {.header_only = true});
+        open_reads = counter.reads();
+        file.load_ancillary_data();
+        load_reads = counter.reads() - open_reads;
+    }
+    ASSERT_GT(load_reads, 2U);
+    const reader full = openxisf::test::open_unit(unit_with_ancillary_data());
+
+    for (const fault kind : {fault::error, fault::short_transfer, fault::foreign_exception}) {
+        for (std::size_t failing = open_reads + 1; failing <= open_reads + load_reads; ++failing) {
+            reader file(std::make_unique<faulty_source>(unit, failing, kind), {.header_only = true});
+            try {
+                file.load_ancillary_data();
+                ADD_FAILURE() << "read " << failing << " did not fail the load";
+            } catch (const openxisf::io_error& failure) {
+                EXPECT_NE(kind, fault::foreign_exception) << failing;
+                EXPECT_EQ(failure.code(), kind == fault::error ? errc::read_failed : errc::end_of_data) << failing;
+            } catch (const openxisf::test::injected_fault&) {
+                EXPECT_EQ(kind, fault::foreign_exception) << failing;
+            }
+            EXPECT_FALSE(file.ancillary_data_loaded()) << failing;
+            EXPECT_TRUE(file.image(0).icc_profile.empty()) << failing;
+            EXPECT_TRUE(file.properties().empty()) << failing;
+            EXPECT_TRUE(no_diagnostics(file.diagnostics())) << failing;
+
+            file.load_ancillary_data();
+            EXPECT_EQ(file.image(0), full.image(0)) << failing;
+            EXPECT_EQ(file.properties(), full.properties()) << failing;
+            EXPECT_EQ(file.diagnostics().size(), full.diagnostics().size()) << failing;
+        }
+    }
 }
 
 TEST(reader, moves)

@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
 // The writer checks a unit against the specification before it writes any byte of it, and names the object at fault:
-// one case for each rule.
+// one case for each rule, of properties (spec §8.4.1, §8.4.3, §8.4.4, §11.1), tables (§8.4.4.7, §11.2, §11.3), the
+// metadata (§11.4) and reserved identifiers (§11.5.3), images (§8.5.1, §8.5.5, §11.5.1) and their ancillary elements
+// (§8.5.4, §8.5.6, §11.6 to §11.12).
 
 #include <openxisf/error.h>
 #include <openxisf/image.h>
@@ -10,6 +12,7 @@
 #include <openxisf/property.h>
 #include <openxisf/writer.h>
 
+#include "core/scratch_buffer.h"
 #include "support/bytes.h"
 #include "support/temp_directory.h"
 
@@ -24,6 +27,7 @@
 #include <limits>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -352,6 +356,14 @@ std::vector<rule> rules()
          .code = errc::invalid_table,
          .element = image + "/Table[@id='Table']/Structure/Field[2]",
          .attribute = "id"},
+        {.name = "field_type",
+         .breaks =
+             [](model& unit) {
+                 first(unit).tables.front().fields[0].type = outside_of_enumeration<openxisf::property_type>();
+             },
+         .code = errc::unsupported_property_type,
+         .element = image + "/Table[@id='Table']/Structure/Field[1]",
+         .attribute = "type"},
         {.name = "field_header",
          .breaks = [](model& unit) { first(unit).tables.front().fields[1].header = "\x7F ok, \x1B not"; },
          .code = errc::invalid_character,
@@ -560,6 +572,18 @@ std::vector<rule> rules()
          .code = errc::invalid_rgb_working_space,
          .element = image + "/RGBWorkingSpace",
          .attribute = "Y"},
+        {.name = "luminance_that_the_chromaticities_give_below_0",
+         .breaks =
+             [](model& unit) {
+                 // D50 lies just outside the triangle of these primaries: they give the green coefficient -5.6e-5,
+                 // within the tolerance of the 0 given, and the writer would write that one.
+                 first(unit).rgb_working_space->x = {0.64, 0.30, 0.0};
+                 first(unit).rgb_working_space->y = {0.33, 0.60, 0.39198};
+                 first(unit).rgb_working_space->luminance = {0.4972, 0.0, 0.5029};
+             },
+         .code = errc::invalid_rgb_working_space,
+         .element = image + "/RGBWorkingSpace",
+         .attribute = "Y"},
         {.name = "working_space_name",
          .breaks = [](model& unit) { first(unit).rgb_working_space->name = "\x01"; },
          .code = errc::invalid_character,
@@ -736,6 +760,90 @@ TEST(conformance_writer_validation, strings_that_xml_cannot_hold_are_valid_value
     unit.properties.set("Test:Control", "\x01\x02 \xEF\xBF\xBE");
     first(unit).tables.front().rows.front()[1] = "\x1B[0m";
     EXPECT_NO_THROW(save(unit));
+}
+
+// A save of output that the writer refuses with header_too_large before any byte is written, and before the progress
+// function, which counts its calls, hears of it. distributed picks save_distributed() over save(), and rewritable
+// memory sinks over sinks that only append.
+void expect_header_too_large(const openxisf::writer& output, const int& progress_calls, bool distributed,
+                             bool rewritable)
+{
+    SCOPED_TRACE(std::string(distributed ? "distributed" : "monolithic") + (rewritable ? ", rewritable" : ""));
+    std::uint64_t appended = 0;
+    const auto append = [&appended](std::span<const std::byte> data) { appended += data.size(); };
+    openxisf::memory_sink header;
+    openxisf::memory_sink blocks;
+    openxisf::callback_sink appended_header(append);
+    openxisf::callback_sink appended_blocks(append);
+    openxisf::output_sink& header_sink = rewritable ? static_cast<openxisf::output_sink&>(header) : appended_header;
+    openxisf::output_sink& blocks_sink = rewritable ? static_cast<openxisf::output_sink&>(blocks) : appended_blocks;
+    try {
+        if (distributed) {
+            output.save_distributed(header_sink, blocks_sink, "unit.xisb");
+        } else {
+            output.save(header_sink);
+        }
+        ADD_FAILURE() << "the unit was written";
+    } catch (const openxisf::validation_error& failure) {
+        EXPECT_EQ(failure.code(), errc::header_too_large) << failure.what();
+        EXPECT_EQ(failure.context().element, "/xisf");
+    }
+    EXPECT_EQ(header.position() + blocks.position() + appended, 0U);
+    EXPECT_EQ(progress_calls, 0);
+}
+
+TEST(conformance_writer_validation, a_header_longer_than_its_length_can_count_is_refused)
+{
+    // Spec §9.2: the header length has 32 bits. A subblock takes at least four characters of the header ("1,1:"), so
+    // the 2^30 subblocks of one byte of two images of 512 MiB cannot be listed, though those of each could be; the
+    // writer finds it before it compresses anything, so the memory of the pixel data, which the images share, is never
+    // written or read.
+    image_info image;
+    image.geometry = {.dimensions = {std::uint64_t{1} << 15, std::uint64_t{1} << 14}, .channels = 1};
+    image.sample_format = openxisf::sample_format::uint8;
+    const openxisf::detail::scratch_buffer pixels(image.data_size());
+    openxisf::write_options options = model{}.options;
+    options.codec = openxisf::codec::lz4;
+    options.subblock_size = 1;
+    int calls = 0;
+    options.progress = [&calls](std::uint64_t, std::uint64_t) {
+        ++calls;
+        return false;
+    };
+    openxisf::writer output(options);
+    (void)output.add_image(image, pixels.bytes());
+    (void)output.add_image(image, pixels.bytes());
+    for (const bool distributed : {false, true}) {
+        for (const bool rewritable : {false, true}) {
+            expect_header_too_large(output, calls, distributed, rewritable);
+        }
+    }
+}
+
+TEST(conformance_writer_validation, a_header_without_room_for_its_longest_form_is_refused_before_it_is_built)
+{
+    // Sinks that can rewrite get a compressed unit in one pass, and its header once its blocks are written: after room
+    // for the longest header that the blocks can give in a monolithic file, and after the data blocks file of a
+    // distributed unit. The longest header has subblocks of 20 digits. The 2^27 subblocks of one byte of an image of
+    // 128 MiB would fit in 2^32 - 1 bytes at four characters each, but not at that width, over 5 GiB: the writer
+    // refuses the unit before it lists them, and before the progress function hears of the save, which it would cancel.
+    image_info image;
+    image.geometry = {.dimensions = {std::uint64_t{1} << 14, std::uint64_t{1} << 13}, .channels = 1};
+    image.sample_format = openxisf::sample_format::uint8;
+    const openxisf::detail::scratch_buffer pixels(image.data_size());
+    openxisf::write_options options = model{}.options;
+    options.codec = openxisf::codec::lz4;
+    options.subblock_size = 1;
+    int calls = 0;
+    options.progress = [&calls](std::uint64_t, std::uint64_t) {
+        ++calls;
+        return false;
+    };
+    openxisf::writer output(options);
+    (void)output.add_image(image, pixels.bytes());
+    for (const bool distributed : {false, true}) {
+        expect_header_too_large(output, calls, distributed, true);
+    }
 }
 
 TEST(conformance_writer_validation, a_save_to_a_path_creates_no_file_for_an_invalid_unit)

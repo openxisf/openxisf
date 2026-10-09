@@ -7,8 +7,10 @@
 #include <openxisf/image.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 
 // The attributes of the elements that describe images (spec §11.6 to §11.11), read from their text, and the rules that
@@ -18,11 +20,20 @@
 namespace openxisf::detail {
 
 /// True when name is a FITS keyword name (FITS 4.0 §4.1.2.1) without padding: at most eight characters, each an
-/// upper-case letter, a digit, a hyphen or an underscore. The empty name is the blank keyword.
+/// upper-case letter, a digit, a hyphen or an underscore. The empty name is the blank keyword of FITS, which the XML
+/// schema of XISF does not allow; the callers check it apart.
 [[nodiscard]] bool is_fits_keyword_name(std::string_view name) noexcept;
 
 /// True for the keywords that have no value: COMMENT, HISTORY and the blank keyword (FITS 4.0 §4.4.2.4).
 [[nodiscard]] bool is_commentary_keyword(std::string_view name) noexcept;
+
+/// True when text is printable ASCII, from the space to the tilde, as the value and the comment of a FITS keyword are
+/// (FITS 4.0 §4.1.1).
+[[nodiscard]] bool is_fits_keyword_text(std::string_view text) noexcept;
+
+/// True when profile starts with the header of an ICC profile: 128 bytes, with the signature `acsp` at byte 36
+/// (ICC.1:2022 §7.2). An empty profile is no profile, and has none.
+[[nodiscard]] bool has_icc_profile_header(std::span<const std::byte> profile) noexcept;
 
 /// The gamma of a gamma attribute (spec §11.8.1): a finite floating point value above zero, or nothing for the sRGB
 /// function, whose name is sRGB in any case. Throws with errc::invalid_rgb_working_space.

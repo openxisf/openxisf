@@ -8,11 +8,13 @@
 
 #include "codec/codecs.h"
 #include "core/checked_math.h"
+#include "core/scratch_buffer.h"
 
 #include <lz4.h>
 #include <lz4hc.h>
 
 #include <climits>
+#include <cstddef>
 #include <string>
 
 namespace openxisf::detail {
@@ -79,9 +81,14 @@ void lz4_compress(std::span<const std::byte> input, std::vector<std::byte>& outp
 
 void lz4hc_compress(std::span<const std::byte> input, int level, std::vector<std::byte>& output)
 {
-    compress_with([level](const char* source, char* destination, int size,
-                          int capacity) { return LZ4_compress_HC(source, destination, size, capacity, level); },
-                  input, output);
+    // LZ4_compress_HC() allocates this state itself and reports a failure as a failed compression; allocated here, a
+    // failure is std::bad_alloc. new aligns it on 16 bytes at least, and the state needs 8.
+    scratch_buffer state(static_cast<std::size_t>(LZ4_sizeofStateHC()));
+    compress_with(
+        [level, &state](const char* source, char* destination, int size, int capacity) {
+            return LZ4_compress_HC_extStateHC(state.bytes().data(), source, destination, size, capacity, level);
+        },
+        input, output);
 }
 
 } // namespace openxisf::detail

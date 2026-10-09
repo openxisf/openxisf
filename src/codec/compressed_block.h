@@ -90,7 +90,9 @@ using subblock_store = std::function<void(std::span<const std::byte> stored, con
 /// Compresses a block subblock by subblock: the block is shuffled as a whole and divided into subblocks of
 /// subblock_size() bytes (the last one shorter), and each subblock is shuffled from data, compressed and given to
 /// store, in order, on the calling thread. Only the subblocks in the making are held: one at a time without oneTBB, and
-/// with it a batch of as many as the threads of the task arena, within about 1 GiB, compressed in parallel. A subblock
+/// with it a batch of as many as the threads of the task arena, compressed in parallel, of about 1 GiB of data at most,
+/// which takes up to about twice that with the shuffled copies and the output of the codec, besides the state of the
+/// codec on each thread, which at the highest Zstandard levels is many times a subblock of a few MiB. A subblock
 /// that does not get smaller is stored as it is, with equal sizes (see subblocks_of()), as PixInsight stores it:
 /// PixInsight takes any subblock that is not smaller than its data for data stored as they are, so it would misread
 /// codec output that is. Returns how the block is compressed, with every subblock listed, even a single one. Throws
