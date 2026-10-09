@@ -55,16 +55,18 @@ TEST(diagnostic_log, an_error_throws_in_strict_mode)
 
 TEST(diagnostic_log, the_exception_of_an_error_says_what_kind_of_failure_it_is)
 {
-    EXPECT_TRUE(throws<openxisf::integrity_error>(errc::checksum_mismatch,
-                                                  [] { throw_unit_error(errc::checksum_mismatch, "message", {}); }));
+    for (const errc code : {errc::checksum_mismatch, errc::corrupt_compressed_data}) {
+        EXPECT_TRUE(throws<openxisf::integrity_error>(code, [code] { throw_unit_error(code, "message", {}); }));
+    }
     for (const errc code :
          {errc::unsupported_version, errc::unsupported_location, errc::unsupported_checksum,
           errc::unsupported_compression, errc::unsupported_property_type, errc::unsupported_sample_format,
           errc::unsupported_color_space, errc::codec_failure, errc::location_not_allowed, errc::hash_failure}) {
         EXPECT_TRUE(throws<openxisf::unsupported_error>(code, [code] { throw_unit_error(code, "message", {}); }));
     }
-    for (const errc code : {errc::allocation_too_large, errc::ancillary_data_too_large, errc::too_many_index_nodes,
-                            errc::too_many_external_files}) {
+    for (const errc code : {errc::header_too_large, errc::xml_too_deep, errc::too_many_xml_elements,
+                            errc::allocation_too_large, errc::zstd_window_too_large, errc::ancillary_data_too_large,
+                            errc::too_many_index_nodes, errc::too_many_external_files}) {
         EXPECT_TRUE(throws<openxisf::limit_error>(code, [code] { throw_unit_error(code, "message", {}); }));
     }
     // The external files of a distributed unit that cannot be opened or read.
@@ -75,11 +77,14 @@ TEST(diagnostic_log, the_exception_of_an_error_says_what_kind_of_failure_it_is)
         EXPECT_TRUE(throws<openxisf::invalid_data_error>(code, [code] { throw_unit_error(code, "message", {}); }));
     }
 
+    bool thrown = false;
     try {
         throw_unit_error(errc::checksum_mismatch, "message", {.element = "/xisf/Image[1]", .offset = 4096});
     } catch (const openxisf::error& failure) {
+        thrown = true;
         EXPECT_STREQ(failure.what(), "message (element /xisf/Image[1], offset 4096)");
     }
+    EXPECT_TRUE(thrown);
 }
 
 } // namespace

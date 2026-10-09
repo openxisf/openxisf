@@ -23,9 +23,9 @@ namespace openxisf::detail {
 /// errc::invalid_complex for the form, and the errors of parse_float() for the parts.
 template <xisf_float T> [[nodiscard]] std::complex<T> parse_complex(std::string_view text);
 
-/// Checks a Complex128 value, (real,imag) with Float128 parts, and returns it without leading and trailing white
-/// space. Complex128 values are kept as text.
-[[nodiscard]] std::string_view check_complex128(std::string_view text);
+/// Checks a Complex128 value, (real,imag) with Float128 parts, and returns it without white space around it and its
+/// parts (spec §8.3.5). Complex128 values are kept as text.
+[[nodiscard]] std::string check_complex128(std::string_view text);
 
 /// (real,imag), each part as format_float() writes it.
 template <xisf_float T> [[nodiscard]] std::string format_complex(std::complex<T> value);

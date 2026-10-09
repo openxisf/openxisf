@@ -69,7 +69,7 @@ Checks: >
   readability-use-anyofallof
 
 WarningsAsErrors: '*'
-HeaderFilterRegex: '[/\\](include[/\\]openxisf|src|tests)[/\\]'
+HeaderFilterRegex: '[/\\](include[/\\]openxisf|src|tests|samples|benchmarks|fuzz)[/\\]'
 
 CheckOptions:
   # The naming rules of the coding conventions: standard-library style.

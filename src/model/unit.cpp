@@ -24,8 +24,12 @@ parsed_header read_header(const thread_safe_source& source, const limits& limits
                           block_context& context)
 {
     const unit_header header = read_unit_header(source, limits, log);
-    context = {.storage = header.storage, .header_end = header.end, .source_size = source.size()};
-    return parse_header(header.text, header.offset, limits, log);
+    parsed_header parsed = parse_header(header.text, header.offset, limits, log);
+    context = {.storage = header.storage,
+               .header_end = header.end,
+               .source_size = source.size(),
+               .signed_unit = parsed.signature.has_value()};
+    return parsed;
 }
 
 } // namespace

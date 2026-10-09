@@ -24,6 +24,7 @@ set(internal_sources
     container/external_blocks.cpp
     container/file_layout.cpp
     container/unit_writer.cpp
+    core/allocation.cpp
     core/checked_math.cpp
     core/data_encoding.cpp
     core/diagnostic_log.cpp
@@ -112,6 +113,8 @@ set_target_properties(openxisf PROPERTIES
     DEFINE_SYMBOL OPENXISF_EXPORTS
     VERSION "${PROJECT_VERSION}"
     SOVERSION "${OPENXISF_SOVERSION}"
+    # The Debug library has a name of its own, so that Debug and Release builds install side by side in one prefix.
+    DEBUG_POSTFIX d
     # The tests find the DLL next to their executable on Windows.
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
 

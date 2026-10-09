@@ -5,6 +5,7 @@
 
 #include <openxisf/error.h>
 
+#include "core/hex.h"
 #include "core/quote.h"
 
 #include <algorithm>
@@ -14,11 +15,10 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
-#include <ranges>
 #include <system_error>
 #include <type_traits>
 
-#if defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000
+#if (defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000) || (defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE < 12)
 #include <cerrno>
 #include <cstdlib>
 #include <new>
@@ -76,21 +76,6 @@ bool is_digit(char c) noexcept
 // ---------------------------------------------------------------------------------------------------------------------
 // Integers
 
-// The value of a digit in any radix up to 16, or 16 for a character that is not a digit.
-unsigned digit_value(char c) noexcept
-{
-    if (is_digit(c)) {
-        return static_cast<unsigned>(c - '0');
-    }
-    if (c >= 'a' && c <= 'f') {
-        return static_cast<unsigned>(c - 'a') + 10U;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return static_cast<unsigned>(c - 'A') + 10U;
-    }
-    return 16;
-}
-
 // An integer that follows the grammar. Binary, octal and hexadecimal values have no sign.
 struct integer_text
 {
@@ -124,7 +109,7 @@ std::optional<integer_text> scan_integer(std::string_view text) noexcept
         }
         if (radix != 0) {
             const std::string_view digits = value.substr(2);
-            if (!std::ranges::all_of(digits, [radix](char c) { return digit_value(c) < radix; })) {
+            if (!std::ranges::all_of(digits, [radix](char c) { return hex_digit_value(c) < radix; })) {
                 return std::nullopt;
             }
             return integer_text{.negative = false, .radix = radix, .digits = digits};
@@ -151,7 +136,7 @@ std::optional<uint128> magnitude(const integer_text& value) noexcept
 {
     std::array<std::uint32_t, 4> limbs{};
     for (const char c : value.digits) {
-        std::uint64_t carry = digit_value(c);
+        std::uint64_t carry = hex_digit_value(c);
         for (std::uint32_t& limb : limbs) {
             const std::uint64_t product = (std::uint64_t{limb} * value.radix) + carry;
             limb = static_cast<std::uint32_t>(product);
@@ -238,13 +223,14 @@ std::string format_decimal(const uint128& value)
     }
 
     constexpr std::uint32_t group_base = 1'000'000'000;
+    // The most significant first, the order of the long division.
     std::array<std::uint32_t, 4> limbs = {
-        static_cast<std::uint32_t>(value.low), static_cast<std::uint32_t>(value.low >> 32U),
-        static_cast<std::uint32_t>(value.high), static_cast<std::uint32_t>(value.high >> 32U)};
+        static_cast<std::uint32_t>(value.high >> 32U), static_cast<std::uint32_t>(value.high),
+        static_cast<std::uint32_t>(value.low >> 32U), static_cast<std::uint32_t>(value.low)};
     char* start = end;
     while (std::ranges::any_of(limbs, [](std::uint32_t limb) { return limb != 0; })) {
         std::uint64_t remainder = 0;
-        for (std::uint32_t& limb : std::views::reverse(limbs)) {
+        for (std::uint32_t& limb : limbs) {
             const std::uint64_t current = (remainder << 32U) | limb;
             limb = static_cast<std::uint32_t>(current / group_base);
             remainder = current % group_base;
@@ -403,11 +389,12 @@ enum class conversion
     failed,
 };
 
-#if defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000
+#if (defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000) || (defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE < 12)
 
-// libc++ implements floating-point std::from_chars only from LLVM 20. strtod_l with the "C" locale reads the same
-// syntax without depending on the global locale. Only an overflow is reported as out of range: an underflow keeps the
-// rounded value, a zero or a subnormal.
+// libc++ implements floating-point std::from_chars only from LLVM 20, and that of libstdc++ before GCC 12 reports a
+// subnormal result as out of range without storing it. strtod_l with the "C" locale reads the same syntax without
+// depending on the global locale. Only an overflow is reported as out of range: an underflow keeps the rounded value,
+// a zero or a subnormal.
 template <xisf_float T> conversion convert(std::string_view number, T& value)
 {
     const std::string terminated(number);

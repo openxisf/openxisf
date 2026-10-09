@@ -138,72 +138,77 @@ std::string_view property_type_name(property_type type) noexcept
 // ---------------------------------------------------------------------------------------------------------------------
 // property_value
 
-property_value::property_value(bool value) : type_(property_type::boolean), value_(std::in_place_type<bool>, value) {}
-property_value::property_value(std::int8_t value)
+property_value::property_value(bool value) noexcept
+    : type_(property_type::boolean), value_(std::in_place_type<bool>, value)
+{}
+property_value::property_value(std::int8_t value) noexcept
     : type_(property_type::int8), value_(std::in_place_type<std::int8_t>, value)
 {}
-property_value::property_value(std::uint8_t value)
+property_value::property_value(std::uint8_t value) noexcept
     : type_(property_type::uint8), value_(std::in_place_type<std::uint8_t>, value)
 {}
-property_value::property_value(std::int16_t value)
+property_value::property_value(std::int16_t value) noexcept
     : type_(property_type::int16), value_(std::in_place_type<std::int16_t>, value)
 {}
-property_value::property_value(std::uint16_t value)
+property_value::property_value(std::uint16_t value) noexcept
     : type_(property_type::uint16), value_(std::in_place_type<std::uint16_t>, value)
 {}
-property_value::property_value(std::int32_t value)
+property_value::property_value(std::int32_t value) noexcept
     : type_(property_type::int32), value_(std::in_place_type<std::int32_t>, value)
 {}
-property_value::property_value(std::uint32_t value)
+property_value::property_value(std::uint32_t value) noexcept
     : type_(property_type::uint32), value_(std::in_place_type<std::uint32_t>, value)
 {}
-property_value::property_value(std::int64_t value)
+property_value::property_value(std::int64_t value) noexcept
     : type_(property_type::int64), value_(std::in_place_type<std::int64_t>, value)
 {}
-property_value::property_value(std::uint64_t value)
+property_value::property_value(std::uint64_t value) noexcept
     : type_(property_type::uint64), value_(std::in_place_type<std::uint64_t>, value)
 {}
-property_value::property_value(int128 value) : type_(property_type::int128), value_(std::in_place_type<int128>, value)
+property_value::property_value(int128 value) noexcept
+    : type_(property_type::int128), value_(std::in_place_type<int128>, value)
 {}
-property_value::property_value(uint128 value)
+property_value::property_value(uint128 value) noexcept
     : type_(property_type::uint128), value_(std::in_place_type<uint128>, value)
 {}
-property_value::property_value(float value) : type_(property_type::float32), value_(std::in_place_type<float>, value) {}
-property_value::property_value(double value) : type_(property_type::float64), value_(std::in_place_type<double>, value)
+property_value::property_value(float value) noexcept
+    : type_(property_type::float32), value_(std::in_place_type<float>, value)
 {}
-property_value::property_value(std::complex<float> value)
+property_value::property_value(double value) noexcept
+    : type_(property_type::float64), value_(std::in_place_type<double>, value)
+{}
+property_value::property_value(std::complex<float> value) noexcept
     : type_(property_type::complex32), value_(std::in_place_type<std::complex<float>>, value)
 {}
-property_value::property_value(std::complex<double> value)
+property_value::property_value(std::complex<double> value) noexcept
     : type_(property_type::complex64), value_(std::in_place_type<std::complex<double>>, value)
 {}
-property_value::property_value(std::string value) : value_(std::in_place_type<std::string>, std::move(value)) {}
+property_value::property_value(std::string value) noexcept : value_(std::in_place_type<std::string>, std::move(value))
+{}
 property_value::property_value(std::string_view value) : value_(std::in_place_type<std::string>, value) {}
 property_value::property_value(const char* value) : value_(std::in_place_type<std::string>, value) {}
-property_value::property_value(date_time value)
+property_value::property_value(date_time value) noexcept
     : type_(property_type::time_point), value_(std::in_place_type<date_time>, value)
 {}
 
 property_value::property_value(property_type type, storage value) noexcept : type_(type), value_(std::move(value)) {}
 
-property_value property_value::from_float128_text(std::string text)
+property_value property_value::from_float128_text(std::string_view text)
 {
     try {
-        (void)detail::check_float128(text);
+        return {property_type::float128, std::string(detail::check_float128(text))};
     } catch (const invalid_data_error& failure) {
         throw usage_error(errc::invalid_argument, failure.what());
     }
-    return {property_type::float128, std::move(text)};
 }
 
-property_value property_value::from_complex128_text(std::string text)
+property_value property_value::from_complex128_text(std::string_view text)
 {
     try {
-        (void)detail::check_complex128(text);
+        return {property_type::complex128, detail::check_complex128(text)};
     } catch (const invalid_data_error& failure) {
         throw usage_error(errc::invalid_argument, failure.what());
     }
-    return {property_type::complex128, std::move(text)};
 }
 
 std::uint64_t property_value::length() const

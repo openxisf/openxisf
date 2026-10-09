@@ -191,7 +191,8 @@ void zlib_compress(std::span<const std::byte> input, int level, std::vector<std:
     z_stream& stream = state.stream();
     buffer<const std::byte> in(input, max_piece);
     const std::size_t start = output.size();
-    // About what deflate needs for data it cannot compress; the output grows when that is not enough.
+    // More than deflate needs for data it cannot compress, which zlib bounds at a little more than the data
+    // (deflateBound()); the output still grows if another implementation of zlib ever needs more.
     output.resize(start + input.size() + (input.size() / 8) + 64);
     std::size_t written = 0;
 

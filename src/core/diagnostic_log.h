@@ -5,16 +5,35 @@
 
 #include <openxisf/error.h>
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace openxisf::detail {
 
-/// Throws the exception for an error found in a unit: integrity_error for data that fail a check, unsupported_error for
-/// valid data that OpenXISF cannot handle or does not allow, limit_error for data beyond a limit, io_error for an
-/// external file that cannot be opened or read, and invalid_data_error for anything else.
-[[noreturn]] void throw_unit_error(errc code, std::string_view message, error_context context);
+/// The exception of an error that a function of the application raised, such as a resolver, whose class the code does
+/// not give: an io_error, with its system error, or an unsupported_error. by_code leaves the class to the code.
+struct error_origin
+{
+    enum class kind : std::uint8_t
+    {
+        by_code,
+        io,
+        unsupported,
+    };
+
+    kind raised = kind::by_code;
+    std::error_code system_code{};
+};
+
+/// Throws the exception for an error found in a unit: the class of origin, when it gives one, and otherwise
+/// integrity_error for data that fail a check, unsupported_error for valid data that OpenXISF cannot handle or does not
+/// allow, limit_error for data beyond a limit, io_error for an external file that cannot be opened or read, and
+/// invalid_data_error for anything else.
+[[noreturn]] void throw_unit_error(errc code, std::string_view message, error_context context,
+                                   const error_origin& origin = {});
 
 /// The diagnostics recorded while a unit is opened (spec §7). In strict mode, an error fails the open instead.
 class diagnostic_log
@@ -29,7 +48,7 @@ public:
     void warning(errc code, std::string message, error_context context = {});
 
     /// An object of the unit is unavailable. Throws the exception of throw_unit_error() instead in strict mode.
-    void error(errc code, std::string message, error_context context = {});
+    void error(errc code, std::string message, error_context context = {}, const error_origin& origin = {});
 
     [[nodiscard]] const std::vector<diagnostic>& entries() const noexcept
     {

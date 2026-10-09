@@ -26,7 +26,7 @@ constexpr double pole_tolerance = 1e-15;
 // produces at the boundary of their domains.
 constexpr double ratio_tolerance = 1e-12;
 // The reference implementation of the specification rejects points whose angular distance from the reference point
-// exceeds 89.999 degrees in the Gnomonic projection (Annex A.3).
+// exceeds 89.999 degrees in the Gnomonic projection (Annex A.3), in either direction here.
 constexpr double gnomonic_limit = 89.999;
 
 double square(double x) noexcept
@@ -318,8 +318,14 @@ std::optional<native_point> deproject(projection_system system, plane_point poin
 {
     const double r_theta = std::hypot(point.u, point.v);
     switch (system) {
-    case projection_system::gnomonic:
-        return zenithal(point, std::atan2(r, r_theta) * r);
+    case projection_system::gnomonic: {
+        // The limit of project(): a point of the plane farther out stands for no point that it projects.
+        const double theta = std::atan2(r, r_theta) * r;
+        if (!(90.0 - theta <= gnomonic_limit)) {
+            return std::nullopt;
+        }
+        return zenithal(point, theta);
+    }
     case projection_system::stereographic:
         return zenithal(point, 90.0 - (2.0 * std::atan(r_theta / (2.0 * r)) * r));
     case projection_system::zenithal_equal_area: {

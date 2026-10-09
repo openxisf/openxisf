@@ -20,8 +20,11 @@
 
 namespace openxisf {
 
-/// A FITS header keyword of an image (spec §11.6), as the FITS standard defines it: a name of up to eight characters
-/// without padding, and the text of its value and comment. HISTORY and COMMENT keywords have an empty value.
+/// A FITS header keyword of an image (spec §11.6), as the FITS standard defines it: a name of one to eight characters
+/// without padding, and the text of its value and comment, in printable ASCII. HISTORY and COMMENT keywords have an
+/// empty value. The reader keeps a keyword whose name is empty, the blank keyword of FITS, with a warning, and so it
+/// keeps a value or comment with other characters, such as the degree sign; the writer refuses both, since XISF
+/// requires a name and FITS printable ASCII.
 struct fits_keyword
 {
     std::string name{};
@@ -45,7 +48,8 @@ struct rgb_working_space
     std::array<double, 3> x{0.648431, 0.321152, 0.155886};
     /// The y chromaticity coordinates of the primaries.
     std::array<double, 3> y{0.330856, 0.597871, 0.066044};
-    /// The luminance coefficients of the primaries, Y in the specification.
+    /// The luminance coefficients of the primaries, Y in the specification. The writer writes those that the
+    /// chromaticities give.
     std::array<double, 3> luminance{0.222491, 0.716888, 0.060621};
     /// A name for the working space, such as "Adobe RGB (1998)"; empty when there is none.
     std::string name{};
@@ -173,8 +177,11 @@ struct image_info
     std::vector<table> tables{};
     /// The FITS header keywords of the image, in order (spec §11.6).
     std::vector<fits_keyword> fits_keywords{};
-    /// The ICC profile (spec §11.7), its bytes unaltered; empty when there is none, or when the unit was opened with
-    /// read_options::header_only and its ancillary data have not been loaded.
+    /// The ICC profile (spec §11.7), its bytes as the unit holds them; empty when there is none, or when the unit was
+    /// opened with read_options::header_only and its ancillary data have not been loaded. The reader keeps a profile
+    /// that does not start with the 128-byte header of an ICC profile, with its signature `acsp`, with a warning; the
+    /// writer refuses it. The writer sets the embedded-profile flag of a profile that it writes (bit 0 of byte 47),
+    /// and changes nothing else.
     std::vector<std::byte> icc_profile{};
     /// The RGB working space; empty when the unit does not specify one, and sRGB applies.
     std::optional<openxisf::rgb_working_space> rgb_working_space{};

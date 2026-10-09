@@ -17,8 +17,8 @@
 
 namespace openxisf::test {
 
-/// The value of an environment variable, in UTF-8, or nothing when it is not set. Tests read only the optional
-/// OPENXISF_LARGE_SAMPLES_DIR.
+/// The value of an environment variable, in UTF-8, or nothing when it is not set. Tests read only two, both optional:
+/// OPENXISF_LARGE_SAMPLES_DIR and OPENXISF_WRITTEN_UNITS_DIR.
 [[nodiscard]] inline std::optional<std::string> environment_variable(std::string_view name)
 {
 #if defined(_WIN32)

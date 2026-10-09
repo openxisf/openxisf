@@ -15,6 +15,12 @@
 
 namespace openxisf::detail {
 
+/// path made absolute from the current directory, so that it names the same file after the current directory changes:
+/// on Windows as the system makes a path absolute, which normalizes it as every path (GetFullPathNameW()), and on POSIX
+/// systems the current directory followed by a relative path. Throws io_error with errc::open_failed when the current
+/// directory cannot be found, or its path is not valid UTF-8.
+[[nodiscard]] std::string absolute_path(const std::string& path);
+
 /// A file of the operating system, closed on destruction. Reads and writes take explicit offsets, so that any number
 /// of threads can read one file at once.
 class native_file
@@ -35,10 +41,12 @@ public:
     /// file it becomes, which error messages use. Throws io_error with errc::open_failed.
     [[nodiscard]] static std::optional<native_file> create_new(const std::string& path, std::string name);
 
-    /// The canonical path of the file or directory at path: absolute, with every symbolic link resolved (and every
-    /// junction, on Windows), as the system names it. Throws io_error with errc::open_failed when nothing is there or
-    /// the path cannot be resolved, and on Windows with errc::not_a_regular_file for a device, which has no such path.
-    [[nodiscard]] static std::string canonical_path(const std::string& path);
+    /// Finds the file or directory at path without access to its content, and names the result by the canonical path
+    /// of what it found: absolute, with every symbolic link resolved (and every junction, on Windows), as the system
+    /// names it. On POSIX systems the result holds that path alone, and no file. Throws io_error with
+    /// errc::open_failed when nothing is there or the path cannot be resolved, and on Windows with
+    /// errc::not_a_regular_file for a device, which has no such path.
+    [[nodiscard]] static native_file find(const std::string& path);
 
     native_file(native_file&& other) noexcept
         : handle_(std::exchange(other.handle_, closed_handle)), name_(std::move(other.name_))
@@ -67,6 +75,12 @@ public:
     {
         return name_;
     }
+
+    /// Opens for reading the regular file that find() found, with the same name. On Windows it is the file found,
+    /// through its handle, whatever its path names by then; on POSIX systems it is the file at the canonical path,
+    /// which a change of the directory tree since find() can make another one. Throws io_error with errc::open_failed
+    /// or errc::not_a_regular_file.
+    [[nodiscard]] native_file reopen_for_reading() const;
 
     [[nodiscard]] std::uint64_t size() const;
 

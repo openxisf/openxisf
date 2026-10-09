@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(openxisf
-    VERSION 0.5.0
+    VERSION 1.0.0
     DESCRIPTION "C++20 library for reading and writing XISF files"
     HOMEPAGE_URL "https://github.com/openxisf/openxisf"
     LANGUAGES CXX)
@@ -28,7 +28,7 @@ option(OPENXISF_BUILD_TESTS "Build the test suites" ${PROJECT_IS_TOP_LEVEL})
 option(OPENXISF_BUILD_SAMPLES "Build the sample programs" ${PROJECT_IS_TOP_LEVEL})
 option(OPENXISF_BUILD_BENCHMARKS "Build the benchmarks (Google Benchmark)" OFF)
 option(OPENXISF_BUILD_FUZZERS
-    "Build the fuzz targets: libFuzzer programs when OPENXISF_SANITIZE holds 'fuzzer', seed replays otherwise" OFF)
+    "Build the fuzz targets: libFuzzer programs when OPENXISF_SANITIZE holds 'fuzzer', programs of the engine of OPENXISF_FUZZING_ENGINE when it is set, seed replays otherwise" OFF)
 option(OPENXISF_BUILD_DOCS "Add the docs target that builds the API documentation with Doxygen" OFF)
 option(OPENXISF_INSTALL "Generate the install rules" ${PROJECT_IS_TOP_LEVEL})
 option(OPENXISF_ENABLE_SIMD "Use the SIMD kernels of byte shuffling (SSE2 on x86-64)" ON)
@@ -45,12 +45,13 @@ else()
     set(OPENXISF_SHARED OFF)
 endif()
 
-# During 0.x the minor version breaks compatibility, from 1.0 on the major version does.
+# During 0.x the minor version breaks the API, from 1.0 on the major version does. The ABI holds within a minor version
+# only, since a minor version may add members to the option structures and functions to the sources and sinks: the
+# soname is that of the minor version.
+set(OPENXISF_SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
 if(PROJECT_VERSION_MAJOR EQUAL 0)
-    set(OPENXISF_SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
     set(OPENXISF_VERSION_COMPATIBILITY SameMinorVersion)
 else()
-    set(OPENXISF_SOVERSION "${PROJECT_VERSION_MAJOR}")
     set(OPENXISF_VERSION_COMPATIBILITY SameMajorVersion)
 endif()
 
@@ -98,6 +99,8 @@ if(OPENXISF_BUILD_DOCS)
     set(DOXYGEN_FILE_PATTERNS "*.h")
     set(DOXYGEN_QT_AUTOBRIEF YES)
     set(DOXYGEN_PREDEFINED "OPENXISF_API=")
+    # What the inline functions of public headers share is not part of the API.
+    set(DOXYGEN_EXCLUDE_SYMBOLS "openxisf::detail")
     set(DOXYGEN_MACRO_EXPANSION YES)
     set(DOXYGEN_EXPAND_ONLY_PREDEF YES)
     set(DOXYGEN_WARN_AS_ERROR YES)

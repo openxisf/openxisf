@@ -265,15 +265,18 @@ struct term_kinds
     bool fallback = false;
 };
 
-// The newline-separated list of the Terms property. Empty lines, such as the end of a list that ends with a newline,
-// name no kind.
+// The newline-separated list of the Terms property. A newline may be CR LF, whose CR ends a line; any other character
+// belongs to the identifier. Empty lines, such as the end of a list that ends with a newline, name no kind.
 term_kinds parse_terms(std::string_view text, const std::string& id)
 {
     term_kinds kinds;
     while (!text.empty()) {
         const std::size_t end = text.find('\n');
-        const std::string_view line = text.substr(0, end);
+        std::string_view line = text.substr(0, end);
         text = end == std::string_view::npos ? std::string_view() : text.substr(end + 1);
+        if (line.ends_with('\r')) {
+            line.remove_suffix(1);
+        }
         if (line.empty()) {
             continue;
         }

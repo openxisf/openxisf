@@ -6,6 +6,7 @@
 #include <openxisf/error.h>
 
 #include "core/quote.h"
+#include "core/utf8.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -48,6 +49,16 @@ bool is_separator(char c) noexcept
 }
 
 } // namespace
+
+void check_path_argument(std::string_view path, std::string_view what)
+{
+    if (path.empty()) {
+        throw usage_error(errc::invalid_argument, std::string(what) + " is empty");
+    }
+    if (!is_valid_utf8(path)) {
+        throw usage_error(errc::invalid_utf8, std::string(what) + ", " + quote(path) + ", is not valid UTF-8");
+    }
+}
 
 std::string parent_directory(std::string_view path)
 {

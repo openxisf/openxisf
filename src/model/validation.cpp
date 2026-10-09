@@ -31,11 +31,6 @@ namespace openxisf::detail {
 
 namespace {
 
-// The bytes of the header of an ICC profile (ICC.1:2022 §7.2), which holds the signature 'acsp' at byte 36.
-constexpr std::size_t icc_header_size = 128;
-constexpr std::size_t icc_signature_offset = 36;
-constexpr std::string_view icc_signature = "acsp";
-
 [[noreturn]] void fail(errc code, const std::string& message, const std::string& element,
                        std::string_view attribute = {})
 {
@@ -159,6 +154,12 @@ void check_table(const table& item, std::size_t position, const std::string& par
         if (!ids.insert(field.id).second) {
             fail(errc::invalid_table, "another field of the table has the identifier " + field.id, field_element, "id");
         }
+        if (!is_property_type(field.type)) {
+            fail(errc::unsupported_property_type,
+                 "the field has the type " + std::to_string(static_cast<int>(field.type)) +
+                     ", which is no property type of the specification (spec §8.4.4)",
+                 field_element, "type");
+        }
         check_text(field.header, field_element, "header", "the header");
         if (field.format) {
             check_format(*field.format, field.type, field_element, "format");
@@ -259,9 +260,6 @@ void check_geometry(const geometry& size, color_space space, const std::string& 
 
 void check_keywords(const std::vector<fits_keyword>& keywords, const std::string& parent)
 {
-    const auto printable = [](std::string_view text) {
-        return std::ranges::all_of(text, [](char c) { return c >= ' ' && c <= '~'; });
-    };
     for (std::size_t i = 0; i < keywords.size(); ++i) {
         const fits_keyword& keyword = keywords[i];
         const std::string element = parent + "/FITSKeyword[" + std::to_string(i + 1) + "]";
@@ -278,11 +276,11 @@ void check_keywords(const std::vector<fits_keyword>& keywords, const std::string
             fail(errc::invalid_fits_keyword, "a " + keyword.name + " keyword has no value (spec §11.6.1)", element,
                  "value");
         }
-        if (!printable(keyword.value)) {
+        if (!is_fits_keyword_text(keyword.value)) {
             fail(errc::invalid_fits_keyword, "the value of a FITS keyword is printable ASCII text (FITS 4.0 §4.1.1)",
                  element, "value");
         }
-        if (!printable(keyword.comment)) {
+        if (!is_fits_keyword_text(keyword.comment)) {
             fail(errc::invalid_fits_keyword, "the comment of a FITS keyword is printable ASCII text (FITS 4.0 §4.1.1)",
                  element, "comment");
         }
@@ -291,17 +289,7 @@ void check_keywords(const std::vector<fits_keyword>& keywords, const std::string
 
 void check_icc_profile(const std::vector<std::byte>& profile, const std::string& parent)
 {
-    if (profile.empty()) {
-        return;
-    }
-    const auto signature = [&profile] {
-        std::string text;
-        for (std::size_t i = 0; i < icc_signature.size(); ++i) {
-            text += static_cast<char>(profile[icc_signature_offset + i]);
-        }
-        return text;
-    };
-    if (profile.size() < icc_header_size || signature() != icc_signature) {
+    if (!profile.empty() && !has_icc_profile_header(profile)) {
         fail(errc::invalid_icc_profile,
              "the ICC profile does not start with the header of an ICC profile, 128 bytes with the signature 'acsp'",
              parent + "/ICCProfile");
@@ -331,6 +319,14 @@ void check_working_space(const std::optional<rgb_working_space>& space, const st
                  "reference white (spec §8.5.4.1)",
                  element, "Y");
         }
+    }
+    // The coefficients that the chromaticities give are written, and a white just outside the triangle of the primaries
+    // gives one below 0, within the tolerance of a 0 given.
+    if (!std::ranges::all_of(derived, [](double value) { return value >= 0.0 && value <= 1.0; })) {
+        fail(errc::invalid_rgb_working_space,
+             "the luminance coefficients that the chromaticities give, which the writer writes, are not in [0, 1] "
+             "(spec §8.5.4.1)",
+             element, "Y");
     }
     check_text(space->name, element, "name", "the name");
 }

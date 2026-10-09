@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Ezequiel Ruiz
 
-// Every sample written by PixInsight opens as written: the elements of its header, and its data blocks.
+// Every sample written by PixInsight opens as written: the elements of its header, and its data blocks. The catalogue
+// lists every sample.
 
 #include <openxisf/image.h>
 #include <openxisf/io.h>
@@ -12,7 +13,6 @@
 #include "container/data_block.h"
 #include "container/file_layout.h"
 #include "core/diagnostic_log.h"
-#include "core/utc_time.h"
 #include "io/thread_safe_source.h"
 #include "model/header.h"
 #include "model/outline.h"
@@ -20,12 +20,14 @@
 #include "samples/sample_catalog.h"
 #include "support/diagnostics.h"
 #include "support/opened_unit.h"
+#include "support/temp_directory.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,16 +39,17 @@ using openxisf::test::sample;
 class samples_structure : public testing::TestWithParam<sample>
 {};
 
-TEST_P(samples_structure, opens_with_a_warning_about_the_type_of_its_creation_time)
+TEST_P(samples_structure, opens_with_an_info_about_the_type_of_its_creation_time)
 {
+    // PixInsight writes XISF:CreationTime as a String; the reader reads the TimePoint that it holds.
     const openxisf::reader file(openxisf::test::sample_path(GetParam()));
 
     EXPECT_EQ(file.storage(), openxisf::unit_storage::monolithic);
     EXPECT_EQ(file.signature(), openxisf::signature_status::none);
-    EXPECT_TRUE(openxisf::test::single_diagnostic(file.diagnostics(), openxisf::severity::warning,
+    EXPECT_TRUE(openxisf::test::single_diagnostic(file.diagnostics(), openxisf::severity::info,
                                                   openxisf::errc::reserved_property_type,
                                                   openxisf::test::creation_time_path));
-    EXPECT_EQ(file.metadata().at("XISF:CreationTime").value.type(), openxisf::property_type::string);
+    EXPECT_EQ(file.metadata().at("XISF:CreationTime").value.type(), openxisf::property_type::time_point);
 }
 
 TEST_P(samples_structure, has_the_metadata_of_pixinsight)
@@ -56,10 +59,8 @@ TEST_P(samples_structure, has_the_metadata_of_pixinsight)
     EXPECT_EQ(metadata.at("XISF:CreatorApplication").value, openxisf::property_value(GetParam().application));
     EXPECT_EQ(metadata.at("XISF:CreatorModule").value, openxisf::property_value("XISF module version 1.1.3"));
     EXPECT_EQ(metadata.at("XISF:CreatorOS").value, openxisf::property_value("Windows"));
-    // The String of the creation time holds a TimePoint of the day the samples were written.
-    const openxisf::date_time created =
-        openxisf::detail::parse_time_point(metadata.at("XISF:CreationTime").value.get<std::string>());
-    EXPECT_EQ(created.year, 2026);
+    // The creation time is of the day the samples were written.
+    EXPECT_EQ(metadata.at("XISF:CreationTime").value.get<openxisf::date_time>().year, 2026);
 }
 
 TEST_P(samples_structure, has_the_elements_that_pixinsight_wrote)
@@ -136,5 +137,24 @@ INSTANTIATE_TEST_SUITE_P(pixinsight, samples_structure, testing::ValuesIn(openxi
                          [](const testing::TestParamInfo<sample>& parameter) {
                              return std::string(parameter.param.id);
                          });
+
+TEST(samples_catalog, lists_every_unit_of_the_sample_directory)
+{
+    // The tests over all_samples() cover every unit of tests/data/pixinsight, and each one once.
+    std::vector<std::string> files;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(openxisf::test::path_of(OPENXISF_TEST_DATA_DIR) / "pixinsight")) {
+        if (entry.path().extension() == ".xisf") {
+            files.push_back(openxisf::test::utf8(entry.path().filename()));
+        }
+    }
+    std::vector<std::string> listed;
+    for (const sample& unit : openxisf::test::all_samples()) {
+        listed.emplace_back(unit.file);
+    }
+    std::ranges::sort(files);
+    std::ranges::sort(listed);
+    EXPECT_EQ(listed, files);
+}
 
 } // namespace

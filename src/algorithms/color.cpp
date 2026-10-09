@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,6 +36,25 @@ double determinant(const matrix& m) noexcept
     return (m[0][0] * ((m[1][1] * m[2][2]) - (m[1][2] * m[2][1]))) -
            (m[0][1] * ((m[1][0] * m[2][2]) - (m[1][2] * m[2][0]))) +
            (m[0][2] * ((m[1][0] * m[2][1]) - (m[1][1] * m[2][0])));
+}
+
+// The determinant of m, or nothing when m is singular. A determinant within the rounding error of its terms is zero:
+// that of a singular matrix keeps such a residue where the products are fused into one operation, as compilers may do
+// where the processor can, and a matrix made from chromaticities is rounded already, so that primaries on one line
+// leave one everywhere.
+std::optional<double> nonsingular_determinant(const matrix& m) noexcept
+{
+    const double whole = determinant(m);
+    double terms = 0.0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::size_t j = (i + 1) % 3;
+        const std::size_t k = (i + 2) % 3;
+        terms += std::abs(m[0][i]) * (std::abs(m[1][j] * m[2][k]) + std::abs(m[1][k] * m[2][j]));
+    }
+    if (!std::isfinite(whole) || std::abs(whole) <= 16.0 * std::numeric_limits<double>::epsilon() * terms) {
+        return std::nullopt;
+    }
+    return whole;
 }
 
 // The inverse of m, whose determinant is whole and not zero: the transposed matrix of cofactors over the determinant.
@@ -80,12 +100,14 @@ double f(double t) noexcept
     return t > epsilon ? std::cbrt(t) : ((kappa * t) + 16.0) / 116.0;
 }
 
-// The L component of equation [60], 1.16 f(Y) - 0.16. Its linear part is written as κ Y / 100, the same value, so that
-// black gives exactly 0: the rounding residue of the form of the specification, about 1e-17, would become 1e-8 through
-// the exponent 1/γ of a gamma working space when the colour goes back to RGB.
+// The L component of equation [60], 1.16 f(Y) - 0.16, in algebraically equal forms that keep black and white exact.
+// The cube root part is written as 1.16 (f(Y) - 1) + 1, so that white gives exactly 1, where 1.16 - 0.16 rounds below
+// it. The linear part is written as κ Y / 100, so that black gives exactly 0: the rounding residue of the form of the
+// specification, about 1e-17, would become 1e-8 through the exponent 1/γ of a gamma working space when the colour goes
+// back to RGB.
 double lightness(double y) noexcept
 {
-    return y > epsilon ? (1.16 * std::cbrt(y)) - 0.16 : kappa * y / 100.0;
+    return y > epsilon ? (1.16 * (std::cbrt(y) - 1.0)) + 1.0 : kappa * y / 100.0;
 }
 
 // Equation [61] for one component of equation [63]: t³, or (116 t - 16) / κ, whose numerator, linear, the caller
@@ -153,8 +175,8 @@ std::optional<std::array<double, 3>> luminance_coefficients(const std::array<dou
         system[1][i] = 1.0;
         system[2][i] = (1.0 - x[i] - y[i]) / y[i];
     }
-    const double whole = determinant(system);
-    if (whole == 0.0 || !std::isfinite(whole)) {
+    const std::optional<double> whole = nonsingular_determinant(system);
+    if (!whole) {
         return std::nullopt;
     }
     constexpr color_components white{d50_x, 1.0, d50_z};
@@ -164,7 +186,7 @@ std::optional<std::array<double, 3>> luminance_coefficients(const std::array<dou
         for (std::size_t row = 0; row < 3; ++row) {
             replaced[row][i] = white[row];
         }
-        luminance[i] = determinant(replaced) / whole;
+        luminance[i] = determinant(replaced) / *whole;
         if (!std::isfinite(luminance[i])) {
             return std::nullopt;
         }
@@ -214,12 +236,12 @@ color_converter::color_converter(const rgb_working_space& space)
         to_xyz_[1][i] = (*luminance)[i];
         to_xyz_[2][i] = (*luminance)[i] * (1.0 - space.x[i] - space.y[i]) / space.y[i];
     }
-    const double whole = determinant(to_xyz_);
-    if (whole == 0.0 || !std::isfinite(whole)) {
+    const std::optional<double> whole = nonsingular_determinant(to_xyz_);
+    if (!whole) {
         throw usage_error(errc::invalid_rgb_working_space,
                           "the luminance coefficients of the RGB working space make its transformation singular");
     }
-    to_rgb_ = inverse(to_xyz_, whole);
+    to_rgb_ = inverse(to_xyz_, *whole);
 }
 
 double color_converter::linearize(double component) const noexcept
@@ -237,8 +259,9 @@ double color_converter::delinearize(double component) const noexcept
 {
     const double value = clip(component);
     if (gamma_ == 0.0) {
-        // Equation [55].
-        return clip(value <= 0.0031308 ? 12.92 * value : (1.055 * std::pow(value, 1.0 / 2.4)) - 0.055);
+        // Equation [55], with 1.055 v^(1/2.4) - 0.055 written so that white gives exactly 1: 1.055 - 0.055 rounds below
+        // it in double precision.
+        return clip(value <= 0.0031308 ? 12.92 * value : (1.055 * (std::pow(value, 1.0 / 2.4) - 1.0)) + 1.0);
     }
     // Equation [54].
     return clip(std::pow(value, 1.0 / gamma_));

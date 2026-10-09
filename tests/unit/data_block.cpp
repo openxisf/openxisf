@@ -16,6 +16,7 @@
 #include "support/fixture_builder.h"
 #include "support/opened_unit.h"
 #include "support/throws.h"
+#include "support/virtual_source.h"
 
 #include <gtest/gtest.h>
 
@@ -23,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -108,7 +110,9 @@ TEST(data_block, every_element_that_can_serialize_a_block_has_one_when_it_has_a_
         R"(<Table id="Test:Table"><Structure><Field id="s" type="String"/></Structure>)"
         R"(<Row><Cell location="inline:base64">YWJj</Cell></Row></Table>)");
 
-    EXPECT_TRUE(no_diagnostics(opened.diagnostics));
+    // abc is no ICC profile, which the reader keeps with a warning.
+    EXPECT_TRUE(openxisf::test::single_diagnostic(opened.diagnostics, severity::warning, errc::invalid_icc_profile,
+                                                  "/xisf/Image[1]/ICCProfile[1]"));
     EXPECT_EQ(block_paths(opened),
               (std::vector<std::string>{"/xisf/Image[1]", "/xisf/Image[1]/Property[2]", "/xisf/Image[1]/ICCProfile[1]",
                                         "/xisf/Image[1]/Thumbnail[1]", "/xisf/Table[1]/Row[1]/Cell[1]"}));
@@ -400,6 +404,41 @@ TEST(data_block, an_attached_block_starts_after_the_bytes_that_the_header_length
     const unit opened = open_internal(file);
     ASSERT_EQ(opened.diagnostics.size(), 2U);
     EXPECT_EQ(opened.diagnostics[1].code, errc::block_out_of_bounds);
+}
+
+TEST(data_block, attached_blocks_beyond_4_gib)
+{
+    // A file of 5 GiB whose bytes are computed from their offset, but for the header, which needs no memory for the
+    // rest; the source records where it is read.
+    constexpr std::uint64_t size = std::uint64_t{5} << 30;
+    constexpr std::uint64_t beyond = std::uint64_t{1} << 32;
+    auto reads = std::make_shared<std::vector<std::uint64_t>>();
+    const auto open_at = [&reads](std::uint64_t position) {
+        const std::string header =
+            header_xml(row_image(10, "location=\"attachment:" + std::to_string(position) + ":10\""));
+        return unit(openxisf::test::virtual_source(size, {{.position = 0, .data = monolithic_file(header)}}, reads),
+                    {});
+    };
+
+    // A block whose position, cut to 32 bits, would be inside the header, and one that ends where the file does.
+    for (const std::uint64_t position : {beyond + 16, size - 10}) {
+        const unit opened = open_at(position);
+        EXPECT_TRUE(no_diagnostics(opened.diagnostics)) << position;
+        EXPECT_EQ(stored_block(opened, "/xisf/Image[1]"), openxisf::test::virtual_bytes(position, 10)) << position;
+    }
+    const unit past_the_end = open_at(size - 9);
+    EXPECT_TRUE(unavailable(past_the_end, "/xisf/Image[1]", errc::block_out_of_bounds, "/xisf/Image[1]"));
+
+    // Read in pieces when its progress is reported.
+    const unit opened = open_at(beyond + 16);
+    reads->clear();
+    std::vector<std::uint64_t> calls;
+    EXPECT_EQ(openxisf::detail::read_block(
+                  opened.source, block_at(opened, "/xisf/Image[1]"), opened.limits,
+                  [&calls](std::uint64_t done) { calls.push_back(done); }, 4),
+              openxisf::test::virtual_bytes(beyond + 16, 10));
+    EXPECT_EQ(*reads, (std::vector<std::uint64_t>{beyond + 16, beyond + 20, beyond + 24}));
+    EXPECT_EQ(calls, (std::vector<std::uint64_t>{4, 8, 10}));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

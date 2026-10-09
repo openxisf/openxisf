@@ -5,12 +5,14 @@
 
 #include <openxisf/error.h>
 
+#include "core/hex.h"
 #include "core/quote.h"
 #include "core/utf8.h"
 
 #include <algorithm>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openxisf::detail {
@@ -73,15 +75,7 @@ std::optional<std::uint32_t> character_reference(std::string_view text, std::siz
     std::uint32_t value = 0;
     std::size_t digits = 0;
     for (; i < text.size() && text[i] != ';'; ++i, ++digits) {
-        const char c = text[i];
-        std::uint32_t digit = 16;
-        if (c >= '0' && c <= '9') {
-            digit = static_cast<std::uint32_t>(c - '0');
-        } else if (radix == 16 && c >= 'a' && c <= 'f') {
-            digit = static_cast<std::uint32_t>(c - 'a') + 10;
-        } else if (radix == 16 && c >= 'A' && c <= 'F') {
-            digit = static_cast<std::uint32_t>(c - 'A') + 10;
-        }
+        const std::uint32_t digit = hex_digit_value(text[i]);
         if (digit >= radix) {
             return std::nullopt;
         }
@@ -93,35 +87,151 @@ std::optional<std::uint32_t> character_reference(std::string_view text, std::siz
     return value;
 }
 
+// True for the first byte of an XML name: a letter, '_', ':' or a byte of a character beyond ASCII.
+bool starts_name(char c) noexcept
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' ||
+           static_cast<unsigned char>(c) >= 0x80;
+}
+
+// True when the processing instruction at the start of text, "<?", is an XML declaration as pugixml takes one: its
+// target is xml in any case. pugixml reads the pseudo-attributes of a declaration as attribute values, references
+// included.
+bool is_declaration(std::string_view text) noexcept
+{
+    const auto lowercase = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    if (text.size() < 6 || lowercase(text[2]) != 'x' || lowercase(text[3]) != 'm' || lowercase(text[4]) != 'l') {
+        return false;
+    }
+    // The target ends there: pugixml takes letters, digits, '_', ':', '-', '.' and bytes beyond ASCII for its name.
+    const char next = text[5];
+    const bool longer = starts_name(next) || (next >= '0' && next <= '9') || next == '-' || next == '.';
+    return !longer;
+}
+
+// Calls visit(position, value) for each character reference that pugixml reads in text, with the value that
+// character_reference() gives it: those of character data and attribute values, and of the pseudo-attributes of an
+// XML declaration. References in comments, CDATA sections and other processing instructions are text. A tag, and an
+// XML declaration, is passed over to its first '>' outside quoted attribute values, so that what an attribute value
+// holds, such as "<!--", is part of the value.
+template <typename Visit> void for_each_character_reference(std::string_view text, Visit visit)
+{
+    const auto visit_between = [text, &visit](std::size_t from, std::size_t to) {
+        for (std::size_t i = from; (i = text.find("&#", i)) < to; i += 2) {
+            if (const std::optional<std::uint32_t> value = character_reference(text, i)) {
+                visit(i, *value);
+            }
+        }
+    };
+    std::size_t visited = 0;
+    std::size_t i = 0;
+    while ((i = text.find('<', i)) != std::string_view::npos) {
+        const std::string_view rest = text.substr(i);
+        std::size_t skipped = 0;
+        if (rest.starts_with("<!--")) {
+            skipped = past(text, i + 4, "-->");
+        } else if (rest.starts_with("<![CDATA[")) {
+            skipped = past(text, i + 9, "]]>");
+        } else if (rest.starts_with("<?") && !is_declaration(rest)) {
+            skipped = past(text, i + 2, "?>");
+        } else {
+            i = tag_end(text, i).value_or(text.size());
+            continue;
+        }
+        visit_between(visited, i);
+        visited = skipped;
+        i = skipped;
+    }
+    visit_between(visited, text.size());
+}
+
 // pugixml replaces a character reference with the UTF-8 form of any number, so a reference to U+0000, to a surrogate or
 // beyond U+10FFFF would put a NUL that ends the text early, or invalid UTF-8, into a value. XML 1.0 forbids them (Legal
-// Character). References in comments, CDATA sections and processing instructions are text.
+// Character).
 void check_character_references(std::string_view text, std::uint64_t offset)
 {
-    const auto past = [text](std::size_t from, std::string_view terminator) {
-        const std::size_t found = text.find(terminator, from);
-        return found == std::string_view::npos ? text.size() : found + terminator.size();
-    };
+    for_each_character_reference(text, [text, offset](std::size_t position, std::uint32_t value) {
+        if (value == 0 || (value >= 0xD800 && value <= 0xDFFF) || value > 0x10FFFF) {
+            const std::string_view rest = text.substr(position);
+            throw invalid_data_error(errc::invalid_xml,
+                                     "the character reference " + quote(rest.substr(0, rest.find(';') + 1)) +
+                                         " does not name a character that XML allows",
+                                     {.offset = offset + position});
+        }
+    });
+}
+
+// The characters that XML 1.0 does not allow (Legal Character) and pugixml reads all the same: the control characters
+// other than tab, line feed and carriage return, U+FFFE and U+FFFF. U+0000 and surrogates are refused before.
+bool is_restricted(std::uint32_t value) noexcept
+{
+    return (value >= 0x1 && value <= 0x1F && value != 0x9 && value != 0xA && value != 0xD) || value == 0xFFFE ||
+           value == 0xFFFF;
+}
+
+[[noreturn]] void throw_too_many_elements(const limits& limits, error_context context)
+{
+    throw limit_error(errc::too_many_xml_elements,
+                      "the header has more than " + std::to_string(limits.max_xml_elements) + " XML elements",
+                      std::move(context));
+}
+
+[[noreturn]] void throw_too_deep(const limits& limits, error_context context)
+{
+    throw limit_error(errc::xml_too_deep,
+                      "the header nests XML elements deeper than " + std::to_string(limits.max_xml_depth) + " levels",
+                      std::move(context));
+}
+
+// Counts the elements of text and their nesting from its tags, before pugixml builds the document, which costs about
+// 64 bytes for each element: a header beyond the limits is refused before it is built, whatever its size. Comments,
+// CDATA sections, processing instructions and declarations are skipped, and a tag ends at its first '>' outside quoted
+// attribute values. In well-formed text the counts are those of check_tree(), which checks the document once more
+// with the context of the element at fault; in other text they are what the tags give, and the text fails either way.
+void check_tag_limits(std::string_view text, std::uint64_t offset, const limits& limits)
+{
+    if (limits.max_xml_elements == 0 && limits.max_xml_depth == 0) {
+        return;
+    }
+    std::uint64_t elements = 0;
+    std::uint64_t depth = 0;
     std::size_t i = 0;
-    while ((i = text.find_first_of("<&", i)) != std::string_view::npos) {
+    while ((i = text.find('<', i)) != std::string_view::npos) {
         const std::string_view rest = text.substr(i);
         if (rest.starts_with("<!--")) {
-            i = past(i + 4, "-->");
+            i = past(text, i + 4, "-->");
         } else if (rest.starts_with("<![CDATA[")) {
-            i = past(i + 9, "]]>");
+            i = past(text, i + 9, "]]>");
         } else if (rest.starts_with("<?")) {
-            i = past(i + 2, "?>");
-        } else {
-            if (rest.starts_with("&#")) {
-                const std::optional<std::uint32_t> value = character_reference(text, i);
-                if (value && (*value == 0 || (*value >= 0xD800 && *value <= 0xDFFF) || *value > 0x10FFFF)) {
-                    throw invalid_data_error(errc::invalid_xml,
-                                             "the character reference " + quote(rest.substr(0, rest.find(';') + 1)) +
-                                                 " does not name a character that XML allows",
-                                             {.offset = offset + i});
-                }
+            i = past(text, i + 2, "?>");
+        } else if (rest.starts_with("<!")) {
+            i = past(text, i + 2, ">");
+        } else if (rest.starts_with("</")) {
+            if (depth > 0) {
+                --depth;
             }
+            i = past(text, i + 2, ">");
+        } else if (rest.size() < 2 || !starts_name(rest[1])) {
+            // Not a tag, which the parse reports.
             ++i;
+        } else {
+            ++elements;
+            if (limits.max_xml_elements != 0 && elements > limits.max_xml_elements) {
+                throw_too_many_elements(limits, {.offset = offset + i});
+            }
+            ++depth;
+            if (limits.max_xml_depth != 0 && depth > limits.max_xml_depth) {
+                throw_too_deep(limits, {.offset = offset + i});
+            }
+            const std::optional<std::size_t> end = tag_end(text, i);
+            if (!end) {
+                // The tag does not end, which the parse reports.
+                return;
+            }
+            if (text[*end - 1] == '/') {
+                --depth;
+            }
+            i = *end + 1;
         }
     }
 }
@@ -142,16 +252,10 @@ void check_tree(const pugi::xml_document& document, std::uint64_t offset, const 
         if (node.type() == pugi::node_element) {
             ++elements;
             if (limits.max_xml_elements != 0 && elements > limits.max_xml_elements) {
-                throw limit_error(errc::too_many_xml_elements,
-                                  "the header has more than " + std::to_string(limits.max_xml_elements) +
-                                      " XML elements",
-                                  context_of(node, offset));
+                throw_too_many_elements(limits, context_of(node, offset));
             }
             if (limits.max_xml_depth != 0 && depth > limits.max_xml_depth) {
-                throw limit_error(errc::xml_too_deep,
-                                  "the header nests XML elements deeper than " + std::to_string(limits.max_xml_depth) +
-                                      " levels",
-                                  context_of(node, offset));
+                throw_too_deep(limits, context_of(node, offset));
             }
             check_unique_attributes(node, names, offset);
         }
@@ -173,6 +277,12 @@ void check_tree(const pugi::xml_document& document, std::uint64_t offset, const 
 
 } // namespace
 
+std::size_t past(std::string_view text, std::size_t from, std::string_view terminator) noexcept
+{
+    const std::size_t found = text.find(terminator, from);
+    return found == std::string_view::npos ? text.size() : found + terminator.size();
+}
+
 bool is_xml_white_space(std::string_view text) noexcept
 {
     return std::ranges::all_of(text, [](char c) { return is_xml_white_space(c); });
@@ -185,6 +295,7 @@ std::unique_ptr<pugi::xml_document> parse_xml(std::string_view text, std::uint64
                                  {.offset = offset});
     }
     check_character_references(text, offset);
+    check_tag_limits(text, offset, limits);
 
     auto document = std::make_unique<pugi::xml_document>();
     const pugi::xml_parse_result result =
@@ -199,6 +310,56 @@ std::unique_ptr<pugi::xml_document> parse_xml(std::string_view text, std::uint64
     }
     check_tree(*document, offset, limits);
     return document;
+}
+
+std::optional<restricted_character> first_restricted_character(std::string_view text)
+{
+    std::optional<restricted_character> first;
+    for (std::size_t i = 0; i < text.size() && !first; ++i) {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        const std::string_view next = text.substr(i, 3);
+        if (is_restricted(byte)) {
+            first = restricted_character{.offset = i, .code_point = byte};
+        } else if (next == "\xEF\xBF\xBE" || next == "\xEF\xBF\xBF") {
+            first = restricted_character{.offset = i, .code_point = next == "\xEF\xBF\xBE" ? 0xFFFEU : 0xFFFFU};
+        }
+    }
+    for_each_character_reference(text, [&first](std::size_t position, std::uint32_t value) {
+        if (is_restricted(value) && (!first || position < first->offset)) {
+            first = restricted_character{.offset = position, .code_point = value};
+        }
+    });
+    return first;
+}
+
+std::optional<std::size_t> first_text_outside_elements(std::string_view text)
+{
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t next = std::min(text.find('<', i), text.size());
+        for (std::size_t j = i; j < next; ++j) {
+            if (!is_xml_white_space(text[j])) {
+                return j;
+            }
+        }
+        if (next == text.size()) {
+            break;
+        }
+        const std::string_view rest = text.substr(next);
+        if (rest.starts_with("<![CDATA[")) {
+            return next;
+        }
+        if (rest.starts_with("<!--")) {
+            i = past(text, next + 4, "-->");
+        } else if (rest.starts_with("<?")) {
+            i = past(text, next + 2, "?>");
+        } else if (rest.starts_with("<!")) {
+            i = past(text, next + 2, ">");
+        } else {
+            i = next + element_length(text, next);
+        }
+    }
+    return std::nullopt;
 }
 
 std::string character_data(const pugi::xml_node& element)
@@ -222,58 +383,56 @@ std::optional<std::size_t> element_offset(const pugi::xml_node& element) noexcep
     return static_cast<std::size_t>(name - 1);
 }
 
+std::optional<std::size_t> tag_end(std::string_view text, std::size_t start) noexcept
+{
+    char quote_mark = 0;
+    for (std::size_t i = start + 1; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote_mark != 0) {
+            if (c == quote_mark) {
+                quote_mark = 0;
+            }
+        } else if (c == '"' || c == '\'') {
+            quote_mark = c;
+        } else if (c == '>') {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
 std::size_t element_length(std::string_view text, std::size_t start)
 {
-    // Past the next terminator from position from, or the end of the text.
-    const auto past = [text](std::size_t from, std::string_view terminator) {
-        const std::size_t found = text.find(terminator, from);
-        return found == std::string_view::npos ? text.size() : found + terminator.size();
-    };
-
     std::size_t depth = 0;
     std::size_t i = start;
     while ((i = text.find('<', i)) != std::string_view::npos) {
         // Markup that may hold '<' and '>' without being a tag.
         const std::string_view rest = text.substr(i);
         if (rest.starts_with("<!--")) {
-            i = past(i + 4, "-->");
+            i = past(text, i + 4, "-->");
             continue;
         }
         if (rest.starts_with("<![CDATA[")) {
-            i = past(i + 9, "]]>");
+            i = past(text, i + 9, "]]>");
             continue;
         }
         if (rest.starts_with("<?")) {
-            i = past(i + 2, "?>");
+            i = past(text, i + 2, "?>");
             continue;
         }
 
-        // A tag ends at the first '>' outside its quoted attribute values.
-        char quote_mark = 0;
-        std::size_t end = i + 1;
-        for (; end < text.size(); ++end) {
-            const char c = text[end];
-            if (quote_mark != 0) {
-                if (c == quote_mark) {
-                    quote_mark = 0;
-                }
-            } else if (c == '"' || c == '\'') {
-                quote_mark = c;
-            } else if (c == '>') {
-                break;
-            }
-        }
-        if (end == text.size()) {
+        const std::optional<std::size_t> end = tag_end(text, i);
+        if (!end) {
             break;
         }
-        i = end + 1;
+        i = *end + 1;
 
         if (rest.starts_with("</")) {
             if (depth <= 1) {
                 return i - start;
             }
             --depth;
-        } else if (text[end - 1] == '/') {
+        } else if (text[*end - 1] == '/') {
             if (depth == 0) {
                 return i - start;
             }

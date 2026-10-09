@@ -25,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -119,6 +120,29 @@ TEST_F(file_resolver_test, refuses_a_file_that_does_not_exist)
     }));
 }
 
+TEST_F(file_resolver_test, a_trailing_separator_names_a_directory)
+{
+    // The directory of the header file with one is the same directory; a location with one names no regular file.
+    EXPECT_EQ(open("data.xisb", openxisf::file_resolver(directory() + "/")), "inside");
+    EXPECT_TRUE(refuses<openxisf::io_error>("data.xisb/", errc::open_failed));
+    EXPECT_TRUE(refuses<openxisf::io_error>("sub/", errc::not_a_regular_file));
+}
+
+TEST_F(file_resolver_test, a_name_in_another_case_names_the_file_where_the_file_system_ignores_case)
+{
+    std::error_code error;
+    if (!std::filesystem::exists(unit_directory / "DATA.XISB", error)) {
+        EXPECT_TRUE(refuses<openxisf::io_error>("DATA.XISB", errc::open_failed));
+        return;
+    }
+    EXPECT_EQ(open("DATA.XISB"), "inside");
+    // The directory of the header file in another case is the same directory, and confines as it does.
+    const openxisf::external_resolver resolver = openxisf::file_resolver(utf8(root.path() / "UNIT"));
+    EXPECT_EQ(open("data.xisb", resolver), "inside");
+    EXPECT_TRUE(throws<openxisf::unsupported_error>(errc::location_not_allowed,
+                                                    [&resolver] { (void)open("../outside.dat", resolver); }));
+}
+
 TEST_F(file_resolver_test, refuses_what_is_not_a_regular_file)
 {
     EXPECT_TRUE(refuses<openxisf::io_error>("sub", errc::not_a_regular_file));
@@ -169,7 +193,48 @@ TEST_F(file_resolver_test, refuses_what_names_no_file_on_windows)
     EXPECT_TRUE(refuses<openxisf::unsupported_error>("data.xisb:stream", errc::unsupported_location));
     EXPECT_TRUE(refuses<openxisf::unsupported_error>("C:/outside.dat", errc::unsupported_location));
 }
+
+TEST_F(file_resolver_test, the_names_that_windows_trims_are_confined_like_the_others)
+{
+    // Windows drops the dots and spaces that end a path, so these name data.xisb, and the file that a path names is
+    // the one confined.
+    EXPECT_EQ(open("data.xisb."), "inside");
+    EXPECT_EQ(open("data.xisb  "), "inside");
+    EXPECT_TRUE(refuses<openxisf::unsupported_error>("../outside.dat.", errc::location_not_allowed));
+    EXPECT_TRUE(refuses<openxisf::unsupported_error>("../outside.dat ", errc::location_not_allowed));
+}
+
+TEST_F(file_resolver_test, the_file_read_is_the_one_whose_canonical_path_was_checked)
+{
+    // A directory dot. inside, whose canonical path ends with a dot, which Windows drops from the steps of a path that
+    // it normalizes, beside a junction dot that leads outside: the file read through the junction j to dot. is the
+    // one in dot., not the one that its canonical path names once normalized.
+    const std::filesystem::path outside = root.path() / "outside";
+    std::filesystem::create_directory(outside);
+    write_file(outside / "data.xisb", bytes("outside"));
+    std::filesystem::create_directory(openxisf::test::long_form(unit_directory / "dot."));
+    write_file(openxisf::test::long_form(unit_directory / "dot." / "data.xisb"), bytes("inside, in dot."));
+    openxisf::test::create_junction(outside, unit_directory / "dot");
+    openxisf::test::create_junction(unit_directory / "dot.", unit_directory / "j");
+
+    EXPECT_EQ(open("j/data.xisb"), "inside, in dot.");
+    EXPECT_TRUE(refuses<openxisf::unsupported_error>("dot/data.xisb", errc::location_not_allowed));
+    EXPECT_TRUE(refuses<openxisf::unsupported_error>("dot./data.xisb", errc::location_not_allowed));
+}
 #endif
+
+TEST_F(file_resolver_test, a_relative_directory_is_taken_from_the_current_directory_when_the_resolver_is_made)
+{
+    // The resolver of a unit opened by a relative path finds its files when the unit is read again from another current
+    // directory.
+    openxisf::external_resolver resolver;
+    {
+        const openxisf::test::working_directory moved(root.path());
+        resolver = openxisf::file_resolver("unit");
+    }
+    const openxisf::test::working_directory moved(unit_directory / "sub");
+    EXPECT_EQ(open("data.xisb", resolver), "inside");
+}
 
 TEST_F(file_resolver_test, refuses_absolute_paths_unless_allowed)
 {

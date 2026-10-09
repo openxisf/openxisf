@@ -57,6 +57,10 @@ public:
     /// What the source throws passes through.
     [[nodiscard]] std::optional<property_value> read(const value_element& element);
 
+    /// True when read() leaves the value of element in its data block, which is available: the value is of a type that
+    /// a data block can hold, and the reader does not load blocks. Its identifier is then known, but not its value.
+    [[nodiscard]] bool defers(const value_element& element) const noexcept;
+
 private:
     std::optional<property_value> read_value_attribute(const value_element& element);
     void ignore_value_attribute(const value_element& element);

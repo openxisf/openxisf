@@ -5,35 +5,53 @@ PixInsight. It is written from the published specification and aims at full conf
 [XISF 1.0, Revision 1](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html), with an API that does not
 depend on any application.
 
-**Status: 0.5.0, an early release.** It reads and writes monolithic and distributed units, implements the algorithms
-that the specification defines, and evaluates astrometric solutions; signed units come in a later release, and the API
-may change before 1.0. `openxisf::reader` checks the header of a
-unit (the file structure, the XML, the root element, the elements of the specification and the references between
-them) and its data blocks (where each one is, how it is encoded and compressed, and its checksum, which is verified with
-SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before the block is used). It reads the properties of a unit, of its
-images and the standalone ones, with values of every type of the specification, and tables; its images: their geometry,
-sample format, colour space and other attributes, and their pixel data, decompressed and in native byte order, in either
-storage model, into memory of the library or of the application, with progress and cancellation; and what describes
-each image: FITS keywords, ICC profile, RGB working space, display function, colour filter array, resolution and
-thumbnail. A distributed unit, a header file whose data blocks are in data blocks files (`.xisb`) or other files, is
-read the same way: a resolver opens each file, by default only inside the directory of the header file, and the block
-index of each data blocks file is checked. `openxisf::writer` writes the same model back: it checks a whole unit
-against the specification before it writes a byte of it, and writes its metadata, images, properties and tables, with
-every block uncompressed and without checksums unless asked otherwise, so that every XISF 1.0 decoder reads the result.
-On request it compresses blocks with zlib, LZ4, LZ4HC or Zstandard, with byte shuffling and subblocks, adds checksums
-and generates UUIDs. It writes a monolithic file, or a distributed unit: a header file and a data blocks file next to
-it. Files are replaced only once they are complete.
-The algorithms of the specification are there to show and convert images: the colour transformations of Annex B between
-RGB, CIE XYZ and CIE L*a*b*, relative to the RGB working space of an image, with helpers that convert pixel data to CIE
-L*a*b* before writing and back to RGB after reading; display functions, and the adaptive algorithm that computes one from
-the statistics of an image; the orientation of an image, applied for showing it only; and property values written as
-text with their format specifiers.
-Astrometric solutions, the properties of the `AstrometricSolution` namespace of an image, are read with each of their
-layers checked: the projection, with the seven projection systems of the specification and its linear transformation,
-the projective transformations, and the distortion models of radial basis function splines, Global, Local and Fallback
-terms. A solution converts image coordinates to celestial coordinates and back through its highest available layer, in
-double precision and with the inverse that each layer stores. The writer keeps the properties of a solution as they
-are given.
+**Status: 1.0.0.** It reads and writes monolithic and distributed units, implements the algorithms that the
+specification defines, evaluates astrometric solutions, and reads signed units, whose signatures it returns without
+verifying them. The API is stable: from 1.0 on, only a new major version may break it. The ABI holds within a minor
+version: the shared library of each minor version has a soname of its own (`libopenxisf.so.1.0` for 1.0.x), so a
+program built against 1.0 is rebuilt to use 1.1.
+
+- **Reading.** `openxisf::reader` checks the header of a unit (the file structure, the XML, the root element, the
+  elements of the specification and the references between them) and its data blocks (where each one is, how it is
+  encoded and compressed, and its checksum, which is verified with SHA-1, SHA-256, SHA-512, SHA3-256 or SHA3-512 before
+  the block is used). It reads the properties of the unit, of its images and the standalone ones, with values of every
+  type of the specification, and tables.
+- **Images.** Their geometry, sample format, colour space and other attributes; their pixel data, decompressed and in
+  native byte order, in either storage model, into memory of the library or of the application, with progress and
+  cancellation; and what describes each image: FITS keywords, ICC profile, RGB working space, display function, colour
+  filter array, resolution and thumbnail.
+- **Distributed units.** A header file whose data blocks are in data blocks files (`.xisb`) or other files is read the
+  same way: a resolver opens each file, by default only inside the directory of the header file, and the block index of
+  each data blocks file is checked.
+- **Tolerance.** A problem confined to one object makes that object unavailable, with a diagnostic, and the rest of the
+  unit is read. Departures from the specification that are unambiguous and harmless are read with a warning, such as
+  uppercase hexadecimal digits, codec and checksum algorithm names in another case, or control characters that XML 1.0
+  does not allow; what affects safety or the meaning of the data is refused. A compressed block or subblock whose
+  compressed and uncompressed sizes are equal is read as stored, as PixInsight writes and reads such subblocks.
+- **Writing.** `openxisf::writer` writes the same model back: it checks a whole unit against the specification before
+  it writes a byte of it, and writes its metadata, images, properties and tables, with every block uncompressed and
+  without checksums unless asked otherwise, so that every XISF 1.0 decoder reads the result. On request it compresses
+  blocks with zlib, LZ4, LZ4HC or Zstandard, with byte shuffling and subblocks, adds checksums and generates UUIDs. It
+  writes a monolithic file, or a distributed unit: a header file and a data blocks file next to it. Files are replaced
+  only once they are complete. What several images share is written for each of them, without `uid` attributes or
+  `Reference` elements.
+- **Signed units.** A unit whose header has an XML signature after its root element is read like any other, and its
+  signature is not verified: the reader returns it and the root element that it covers, exactly as written, for the XML
+  signature tooling of the application. A signature that is malformed or does not name the root element does not
+  prevent reading the unit; it is a warning, as is a block stored outside the header of a signed unit without the
+  checksum through which the signature covers it. The writer never signs: a signed unit written again is unsigned.
+- **Algorithms.** The algorithms of the specification are there to show and convert images: the colour transformations
+  of Annex B between RGB, CIE XYZ and CIE L*a*b*, relative to the RGB working space of an image, with helpers that
+  convert pixel data to CIE L*a*b* before writing and back to RGB after reading; display functions, and the adaptive
+  algorithm that computes one from the statistics of an image; the orientation of an image, applied for showing it
+  only; and property values written as text with their format specifiers.
+- **Astrometric solutions.** The properties of the `AstrometricSolution` namespace of an image are read with each of
+  their layers checked: the projection, with the seven projection systems of the specification and its linear
+  transformation, the projective transformations, and the distortion models of radial basis function splines, Global,
+  Local and Fallback terms. A solution converts image coordinates to celestial coordinates and back through its highest
+  available layer, in double precision and with the inverse that each layer stores. The writer keeps the properties of
+  a solution as they are given.
+
 The repository also has the build, test and packaging infrastructure, the error types and safety limits of the API, the
 input and output layer, and the internal building blocks: the text forms of numbers and Boolean values, Base64 and
 hexadecimal data, UUIDs and time stamps.
@@ -53,16 +71,64 @@ hexadecimal data, UUIDs and time stamps.
 | Ancillary elements: FITS keywords, ICC profile, RGB working space, display function, color filter array, resolution, thumbnail | Yes | Yes |
 | Colour transformations (Annex B), display functions and their adaptive algorithm, orientation, property format rendering | Yes | Yes |
 | Astrometric solutions: every projection system and layer, evaluated in both directions | Yes | Kept as given |
-| Signed units (the signature is returned, not verified) | Planned | Not applicable |
+| Signed units (the signature is returned, not verified) | Yes | No: the writer never signs |
 
-The table is updated at each release.
+The conformance matrix below lists each requirement of the specification, whether OpenXISF reads and writes it,
+and the suites of `tests/` that cover it. Every row has passing tests.
+
+| Specification | Requirement | Reading | Writing | Tests |
+|---|---|---|---|---|
+| §7 | Unsupported object unavailable, rest of the unit accessible; unknown elements, attributes and properties ignored | ✓ | – | `conformance/availability`, `conformance/image`, `conformance/property_element` |
+| §7.1 | Baseline encoder abilities | – | ✓ | `conformance/baseline_encoder` |
+| §7.2 | Baseline decoder abilities | ✓ | – | `conformance/baseline_decoder` |
+| §8.1 | 8–64-bit scalars required; 128-bit optional (as data) | ✓ | ✓ | `unit/property_value`, `conformance/writer` |
+| §8.2 | Little-endian structural integers | ✓ | ✓ | `unit/container`, `conformance/writer` |
+| §8.3 | Decimal, radix, float and Boolean text forms; white space | ✓ | ✓ | `unit/text_grammar`, `conformance/writer` |
+| §8.4.1 | Property identifier grammar and uniqueness per object | ✓ | ✓ | `conformance/property_element`, `conformance/writer_validation` |
+| §8.4.3 | Format specifier grammar and rendering | ✓ | ✓ | `unit/format_specifier`, `unit/format`, `conformance/writer`, `conformance/writer_validation` |
+| §8.4.4 | All property types and alternate names; complex; String UTF-8 rules; TimePoint; vectors; matrices | ✓ | ✓ | `unit/property_value`, `conformance/property_element`, `conformance/writer`, `conformance/writer_validation` |
+| §8.4.4.7 | Table structure and data rules | ✓ | ✓ | `conformance/table`, `conformance/writer`, `conformance/writer_validation` |
+| §8.5.1–3 | N-D images, channel rules, planar and normal storage | ✓ | ✓ | `conformance/image`, `unit/pixel_layout`, `conformance/writer`, `conformance/writer_validation` |
+| §8.5.4 | Colour spaces; RGB working space and derived luminance | ✓ | ✓ | `conformance/rgbws`, `unit/color`, `conformance/writer`, `conformance/writer_validation` |
+| §8.5.5 | Representable range defaults and bounds | ✓ | ✓ | `conformance/image`, `conformance/writer`, `conformance/writer_validation` |
+| §8.5.6–7 | Display function evaluation and adaptive algorithm | ✓ | ✓ | `unit/display`, `conformance/writer_validation` |
+| §9.1–9.2 | Monolithic file layout, unused space zero | ✓ | ✓ | `unit/container`, `conformance/writer` |
+| §9.3–9.4 | Header files; data blocks files and block index | ✓ | ✓ | `unit/blocks_file`, `conformance/distributed` |
+| §9.5 | XML declaration, initial comment, root element, namespaces, extension elements | ✓ | ✓ | `conformance/header`, `conformance/writer` |
+| §9.5 | Detached XML signature handling | ✓ | – | `conformance/signature` |
+| §9.6 | File name suffixes | – | ✓ | `conformance/writer`, `conformance/distributed` |
+| §10.1–10.3 | Block location forms, parenthesis rule, attachment bounds | ✓ | ✓ | `unit/block_attributes`, `unit/data_block`, `conformance/writer`, `conformance/distributed` |
+| §10.4 | Byte order attribute | ✓ | ✓ | `conformance/byte_order`, `conformance/writer` |
+| §10.5 | Checksum algorithms, digest rules, verification before use | ✓ | ✓ | `unit/hash`, `conformance/checksum`, `conformance/writer` |
+| §10.6 | Compression attribute, unsupported codec, subblocks | ✓ | ✓ | `unit/codecs`, `unit/compressed_block`, `conformance/writer` |
+| §10.6.1 | Digest over compressed data; no decompression after a failed check | ✓ | ✓ | `conformance/checksum`, `conformance/compression`, `conformance/writer` |
+| §10.6.2 | Byte shuffling including the tail bytes | ✓ | ✓ | `unit/shuffle`, `conformance/writer` |
+| §10.6.3–10 | zlib, LZ4, LZ4HC and Zstandard formats, with and without shuffling | ✓ | ✓ | `unit/codecs`, `samples`, `conformance/writer` |
+| §11 | `uid` grammar and uniqueness; core element names case-sensitive | ✓ | – | `conformance/header` |
+| §11.1 | Property element placement and serialization by type | ✓ | ✓ | `conformance/property_element`, `conformance/writer`, `conformance/writer_validation` |
+| §11.2–11.3 | Structure, Field, Table, Row, Cell | ✓ | ✓ | `conformance/table`, `conformance/writer`, `conformance/writer_validation` |
+| §11.4 | Metadata element, mandatory and optional properties, reserved namespace | ✓ | ✓ | `conformance/metadata`, `conformance/writer`, `conformance/writer_validation` |
+| §11.5.1–2 | Image attributes | ✓ | ✓ | `conformance/image`, `conformance/writer`, `conformance/writer_validation` |
+| §11.5.2 | Orientation applied for visual use only (helper) | ✓ | – | `unit/orientation`, `conformance/writer` |
+| §11.5.3 | Reserved astronomical property identifiers and types | ✓ | ✓ | `unit/property_catalog`, `conformance/writer_validation` |
+| §11.5.3.7 | Astrometric solutions: layers, availability, versioning, evaluation, preservation | ✓ | ✓ | `unit/astrometry`, `samples`, `conformance/writer` |
+| §11.6 | FITSKeyword | ✓ | ✓ | `conformance/fits_keyword`, `conformance/writer`, `conformance/writer_validation` |
+| §11.7 | ICCProfile (unaltered, embedded flag set on write, no byteOrder) | ✓ | ✓ | `conformance/icc`, `conformance/writer`, `conformance/writer_validation` |
+| §11.8 | RGBWorkingSpace | ✓ | ✓ | `conformance/rgbws`, `conformance/writer`, `conformance/writer_validation` |
+| §11.9 | DisplayFunction element | ✓ | ✓ | `conformance/display_function`, `conformance/writer`, `conformance/writer_validation` |
+| §11.10 | ColorFilterArray | ✓ | ✓ | `conformance/cfa`, `conformance/writer`, `conformance/writer_validation` |
+| §11.11 | Resolution | ✓ | ✓ | `conformance/resolution`, `conformance/writer`, `conformance/writer_validation` |
+| §11.12 | Thumbnail restrictions | ✓ | ✓ | `conformance/thumbnail`, `conformance/writer`, `conformance/writer_validation` |
+| §11.13 | Reference, no chained references, root-level image references | ✓ | – | `conformance/reference` |
+| Annex B | RGB ↔ XYZ ↔ L\*a\*b\*, grayscale component | ✓ | ✓ | `unit/color` |
 
 ## Requirements and platforms
 
 - C++20 and CMake 3.25 or newer. 64-bit targets only (x86-64 and arm64); configuring for a 32-bit toolchain stops with
   an error.
-- Compilers: MSVC from Visual Studio 2022, clang-cl, GCC 11, Clang 15, and AppleClang from Xcode 15 with a macOS
-  deployment target of 13.3 or later.
+- Compilers, each tested by CI at the oldest version given: MSVC from Visual Studio 2022, and clang-cl; on Linux,
+  GCC 11, and Clang 15 with libstdc++ or Clang 18 with libc++; the current GCC and Clang of MSYS2; AppleClang from
+  Xcode 16, with a macOS deployment target of 13.3 or later.
 - Platforms: Windows (MSVC, clang-cl, MSYS2 UCRT64 and CLANG64), Linux (GCC and Clang, with libstdc++ or libc++) and macOS.
 - Dependencies: pugixml, zlib, LZ4 and Zstandard. oneTBB and OpenSSL are optional. GoogleTest is needed for the tests,
   and Google Benchmark for the benchmarks.
@@ -82,7 +148,8 @@ ctest --preset linux-gcc-release
 Binaries go to `out/build/<preset>`. Personal settings belong in a `CMakeUserPresets.json`, which git ignores.
 
 Other presets run the tests under analysis tools: `linux-gcc-asan`, `linux-clang-asan` and `msvc-asan` (AddressSanitizer;
-the Linux ones add UndefinedBehaviorSanitizer), `linux-clang-tsan` (ThreadSanitizer) and `linux-gcc-coverage`.
+the Linux ones add UndefinedBehaviorSanitizer), `linux-clang-tsan` (ThreadSanitizer), `linux-clang-tsan-tbb`
+(ThreadSanitizer with oneTBB, over dependencies that vcpkg builds with the instrumentation) and `linux-gcc-coverage`.
 `linux-clang-fuzz` builds the fuzz targets with libFuzzer, and its tests fuzz each target for a minute, starting from the
 seeds in `fuzz/seeds`. The other presets run those seeds once, as a regression test.
 
@@ -92,10 +159,11 @@ checksums, the conversion between storage models, the opening of a large header,
 
 ### Dependencies
 
-- **vcpkg, manifest mode.** Set `VCPKG_ROOT` to a vcpkg checkout. The `msvc` and `clang-cl` presets use it
-  automatically, and `vcpkg.json` pins the versions with a baseline. On other platforms add
-  `-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`. Optional dependencies are features:
-  `-DVCPKG_MANIFEST_FEATURES="tests;benchmarks;tbb;openssl"`.
+- **vcpkg, manifest mode.** Set `VCPKG_ROOT` to a vcpkg checkout. The `msvc`, `clang-cl` and `linux-clang-libcxx`
+  presets use it automatically, and `vcpkg.json` pins the versions with a baseline. `linux-clang-libcxx` builds the
+  dependencies against libc++ too, with the triplet of `cmake/vcpkg`: it needs libc++, and `CC` and `CXX` set to
+  Clang. With the other presets add `-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`.
+  Optional dependencies are features: `-DVCPKG_MANIFEST_FEATURES="tests;benchmarks;tbb;openssl"`.
 - **Linux.** `sudo apt install pkg-config libpugixml-dev zlib1g-dev liblz4-dev libzstd-dev libgtest-dev`, and
   `libbenchmark-dev` for the benchmarks, `libtbb-dev` for oneTBB and `libssl-dev` for OpenSSL.
 - **MSYS2.** In the UCRT64 or CLANG64 shell, install `cmake`, `ninja`, `pkgconf`, `pugixml`, `zlib`, `lz4`, `zstd` and
@@ -117,6 +185,7 @@ The Visual Studio presets use Ninja, which needs the compiler environment: run t
 | `OPENXISF_BUILD_BENCHMARKS` | `OFF` | Build the benchmarks of `benchmarks/` with Google Benchmark |
 | `OPENXISF_BUILD_FUZZERS` | `OFF` | Build the fuzz targets: libFuzzer programs when `OPENXISF_SANITIZE` contains `fuzzer`, seed replays otherwise (the presets turn it on) |
 | `OPENXISF_FUZZ_SECONDS` | `60` | How long the test of each fuzz target runs with libFuzzer |
+| `OPENXISF_FUZZING_ENGINE` | empty | Link the fuzz targets with this fuzzing engine (a flag such as `-fsanitize=fuzzer`, or a library) instead, with the instrumentation of `CMAKE_CXX_FLAGS`, as OSS-Fuzz builds them (`fuzz/oss-fuzz/build.sh`); no test runs them then |
 | `OPENXISF_BUILD_DOCS` | `OFF` | Add the `docs` target, which builds the API documentation with Doxygen |
 | `OPENXISF_INSTALL` | `ON` at the top level | Generate the install rules |
 | `OPENXISF_ENABLE_SIMD` | `ON` | Shuffle and unshuffle bytes with SSE2 on x86-64; other processors use the portable code |
@@ -136,20 +205,26 @@ find_package(openxisf CONFIG REQUIRED)
 target_link_libraries(app PRIVATE openxisf::openxisf)
 ```
 
-The installed package can be moved. A pkg-config file, `openxisf.pc`, is installed as well. OpenXISF is also set up to
-become a vcpkg port.
+The installed package can be moved, unless it is installed with an absolute library directory (`CMAKE_INSTALL_LIBDIR`):
+it then names the prefix of the configuration, which `cmake --install --prefix` cannot change. The library of a Debug
+build has a `d` at the end of its name, so that Debug and Release builds can be installed into one prefix. A pkg-config
+file, `openxisf.pc`, is installed as well, for the configuration installed last. OpenXISF is also set up to become a
+vcpkg port.
 
 ## Examples
 
 A unit is opened with `openxisf::reader`, from a UTF-8 path or from a source. The reader describes each image, and reads
-its pixel data on request, into memory of its own or of the application, as they are stored or interleaved. This excerpt
-of `samples/read_pixels.cpp` reads the samples of an image as values of its sample format, `T`, interleaved, while a
-progress function reports how far the read is:
+its pixel data on request, into memory of its own or of the application, as they are stored or interleaved. These
+excerpts of `samples/read_pixels.cpp` open a unit, then read the samples of its first image as values of its sample
+format, `T`, interleaved, while a progress function reports how far the read is:
 
 ```cpp
 #include <openxisf/openxisf.h>
 
 const openxisf::reader file(path);
+```
+
+```cpp
 const openxisf::image_info& info = file.image(0);
 std::vector<T> samples(info.geometry.sample_count());
 file.read_pixels(0, std::span(samples),
@@ -167,6 +242,9 @@ const bool header_only = arguments.size() == 3 && arguments[1] == "--header-only
 // Without the ancillary data, file.load_ancillary_data() would load them later.
 const openxisf::reader file(arguments.back(), {.header_only = header_only});
 ```
+
+`file.signature()` tells whether a unit is signed, and an application that verifies signatures gets the signature and
+the root element that it covers from `file.signature_xml()` and `file.signed_xml()`.
 
 An application shows an image through the algorithms of the specification. This excerpt of `samples/preview.cpp`
 stretches the samples of an image, normalized to [0, 1] by its representable range, with its display function, or with
@@ -257,8 +335,9 @@ auto store = std::make_shared<std::map<std::string, std::vector<std::byte>>>();
 (*store)["blocks/unit.xisb"] = blocks.release();
 
 openxisf::read_options options;
-options.resolver = [store](const openxisf::external_reference& reference)
-    -> std::unique_ptr<openxisf::input_source> {
+options.resolver =
+    [store](const openxisf::external_reference& reference) -> std::unique_ptr<openxisf::input_source> {
+    std::cout << "  resolving " << reference.location << '\n';
     const auto found = store->find(reference.location);
     if (reference.form != openxisf::location_form::relative_path || found == store->end()) {
         return nullptr;
@@ -305,7 +384,7 @@ beyond its size, and calls it from one thread at a time unless it declares concu
 
 ## Thread safety, errors and text
 
-These are the design rules. They take effect as the API arrives.
+These rules hold throughout the API.
 
 - **Thread safety.** There is no mutable global state. The const member functions of a `reader` can be called from any
   number of threads at once, also to read pixels; `load_ancillary_data()`, the only one that changes it, needs exclusive

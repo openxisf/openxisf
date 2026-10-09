@@ -40,7 +40,10 @@ struct celestial_point
     friend bool operator==(const celestial_point&, const celestial_point&) = default;
 };
 
-/// The projection systems of astrometric solutions (spec §11.5.3.7.2.2, Annex A).
+/// The projection systems of astrometric solutions (spec §11.5.3.7.2.2, Annex A). The cylindrical ones, plate_carree
+/// and mercator, take a point of the plane more than 180 degrees from the reference point to its native longitude
+/// modulo 360, as PixInsight does: the points of an image that spans more than 360 degrees have the same celestial
+/// coordinates 360 degrees apart, which go back to the one within 180 degrees of the reference point.
 enum class projection_system : std::uint8_t
 {
     gnomonic,
@@ -88,7 +91,11 @@ struct astrometric_projection
     std::array<double, 4> linear_transformation{};
     /// The native longitude and latitude of the projection reference point, in degrees.
     std::array<double, 2> reference_native{};
-    /// The native longitude and latitude of the celestial pole, in degrees.
+    /// The native longitude and latitude of the celestial pole, in degrees. Without the property, Annex A.2.1 gives
+    /// the longitude 0 to a Gnomonic solution whose reference point is the north celestial pole, while PixInsight
+    /// evaluates Gnomonic solutions with the direct formulas of Annex A.3, which take 180: the two then differ by a
+    /// half turn about the pole. An application that needs PixInsight's result for such a solution sets
+    /// AstrometricSolution:CelestialPoleNativeCoordinates to (180, 90).
     std::array<double, 2> celestial_pole_native{};
     /// The identifier of the celestial reference system, ICRS when the solution does not specify one, or empty when
     /// its property is not a String.
@@ -123,7 +130,8 @@ struct projective_transformations
 /// solution does not use are ignored, and nothing outside the namespace is read. The evaluation uses the highest layer
 /// available, in double precision, and the inverse that each layer stores, never a numerical inversion.
 ///
-/// A solution is immutable: any number of threads may use it at once. Copies share its data.
+/// A solution is immutable: any number of threads may use it at once. Copies share its data. A moved-from solution
+/// can only be destroyed or assigned to.
 ///
 /// A solution describes the image it was computed for. The writer keeps the properties of a solution as it is given
 /// them, so an application that crops, resamples or otherwise changes the geometry of an image removes them

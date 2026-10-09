@@ -32,9 +32,12 @@ openxisf_add_sample(custom_io)
 openxisf_add_sample(distributed "${CMAKE_CURRENT_BINARY_DIR}/distributed.xish")
 openxisf_add_sample(preview "${sample_data}/d1-rich-rgb.xisf" "${CMAKE_CURRENT_BINARY_DIR}/preview.ppm")
 openxisf_add_sample(read_info "${sample_data}/d1-rich-rgb.xisf")
-add_test(NAME example.read_info.astrometry COMMAND read_info "${sample_data}/d5-astrometry.xisf")
-set_tests_properties(example.read_info.astrometry PROPERTIES LABELS example PASS_REGULAR_EXPRESSION
-    "astrometric solution 1[.]0 [(]Gnomonic, distortion model layer[)], centre at RA 83[.]82")
+# The solution of D5 too, which the test finds in the output, besides the exit code.
+add_test(NAME example.read_info.astrometry
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:read_info>" "-DARGUMENT=${sample_data}/d5-astrometry.xisf"
+        "-DEXPECTED=astrometric solution 1[.]0 [(]Gnomonic, distortion model layer[)], centre at RA 83[.]82"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_output.cmake")
+set_tests_properties(example.read_info.astrometry PROPERTIES LABELS example)
 openxisf_add_sample(read_pixels "${sample_data}/a4-rgb-f32.xisf")
 openxisf_add_sample(stream_io "${sample_data}/a6-rgba-u16.xisf")
 openxisf_add_sample(write_image "${CMAKE_CURRENT_BINARY_DIR}/write_image.xisf")

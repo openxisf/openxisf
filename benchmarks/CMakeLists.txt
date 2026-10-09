@@ -9,6 +9,7 @@ set_target_properties(openxisf_benchmarks PROPERTIES
     CXX_EXTENSIONS OFF
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
 openxisf_enable_warnings(openxisf_benchmarks)
+openxisf_enable_sanitizers(openxisf_benchmarks)
 if(OPENXISF_HARDENING)
     openxisf_enable_hardening(openxisf_benchmarks)
 endif()

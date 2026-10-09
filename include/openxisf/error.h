@@ -80,7 +80,8 @@ enum class errc
     invalid_complex,           ///< Text is not a complex number in the form of spec §11.1.5.
     invalid_time_point,        ///< Text is not a TimePoint value: an ISO 8601 date and time (spec §8.4.4.4).
     invalid_format_specifier,  ///< Text is not a property format specifier (spec §8.4.3).
-    reserved_property_type,    ///< A property with a reserved identifier has another type than the specification's.
+    reserved_property_type,    ///< A property with a reserved identifier has another type than the specification's;
+                               ///< a String that holds a TimePoint is read as the TimePoint (an info diagnostic).
     invalid_metadata,         ///< The Metadata element is missing, repeated or incomplete, or holds a foreign property.
     ancillary_data_too_large, ///< The data loaded when a unit is opened exceed limits::max_ancillary_data.
     invalid_image,    ///< An Image element lacks an attribute or its data, or has an attribute not of spec §11.5.
@@ -109,6 +110,8 @@ enum class errc
     too_many_external_files, ///< A unit names more external files than limits::max_external_files.
     location_not_allowed,    ///< A location that a resolver refuses, such as a path that leaves the header's directory.
     hash_failure,            ///< The hashing library (OpenSSL) failed for a reason other than the data.
+    invalid_signature,       ///< An XML signature that is malformed, or does not name the root element (spec §9.5).
+    missing_checksum,        ///< A data block outside the header of a signed unit, without a checksum (spec §10.5).
 };
 
 /// Where in a unit a problem was found. Empty or absent members are unknown or do not apply.
@@ -234,10 +237,10 @@ enum class severity
 /// A problem found while reading a unit that did not stop the reading (spec §7).
 struct diagnostic
 {
-    openxisf::severity severity;
-    errc code;
-    std::string message;
-    error_context context;
+    openxisf::severity severity = openxisf::severity::info;
+    errc code = errc::invalid_argument;
+    std::string message{};
+    error_context context{};
 };
 
 } // namespace openxisf

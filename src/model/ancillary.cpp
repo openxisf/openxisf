@@ -143,7 +143,14 @@ private:
             return std::nullopt;
         }
         fits_keyword keyword{.name = std::string(*name)};
-        if (!is_fits_keyword_name(keyword.name)) {
+        if (keyword.name.empty()) {
+            // The blank keyword of FITS, which the XML schema of XISF does not allow. It is kept, like the other names
+            // that break the rules, and the writer refuses it.
+            log_.warning(errc::invalid_fits_keyword,
+                         "the name of the FITS keyword is empty, the blank keyword of FITS, which XISF does not allow: "
+                         "the name has one to eight characters",
+                         context("name"));
+        } else if (!is_fits_keyword_name(keyword.name)) {
             log_.warning(errc::invalid_fits_keyword,
                          quote(keyword.name) + " is not a FITS keyword name of at most eight upper-case letters, "
                                                "digits, hyphens and underscores, without padding",
@@ -160,7 +167,8 @@ private:
         return keyword;
     }
 
-    // The value and comment attributes are mandatory, but an empty text means the same as a missing one.
+    // The value and comment attributes are mandatory, but an empty text means the same as a missing one. Text that FITS
+    // cannot hold is kept, and the writer refuses it.
     std::string optional_text(const char* name)
     {
         const pugi::xml_attribute attribute = node_.attribute(name);
@@ -169,11 +177,19 @@ private:
                          "the FITSKeyword element has no " + std::string(name) + " attribute, which is read as empty",
                          context(name));
         }
-        return attribute.value();
+        std::string text = attribute.value();
+        if (!is_fits_keyword_text(text)) {
+            log_.warning(errc::invalid_fits_keyword,
+                         "the " + std::string(name) +
+                             " of the FITS keyword has characters other than printable ASCII, which FITS does not "
+                             "allow (FITS 4.0 §4.1.1)",
+                         context(name));
+        }
+        return text;
     }
 
     // -----------------------------------------------------------------------------------------------------------------
-    // Spec §11.7: the profile is a data block, kept unaltered.
+    // Spec §11.7: the profile is a data block, kept unaltered, even when it is not an ICC profile.
 
     std::optional<std::vector<std::byte>> read_icc_profile(std::size_t index)
     {
@@ -189,7 +205,16 @@ private:
         if (!load_blocks_) {
             return std::vector<std::byte>{};
         }
-        return load_block(source_, *block->second->descriptor, limits_, budget_, path(), log_);
+        std::optional<std::vector<std::byte>> profile =
+            load_block(source_, *block->second->descriptor, limits_, budget_, path(), log_);
+        // The profile is kept as it is, and the writer refuses it.
+        if (profile && !profile->empty() && !has_icc_profile_header(*profile)) {
+            log_.warning(errc::invalid_icc_profile,
+                         "the ICC profile does not start with the header of an ICC profile, 128 bytes with the "
+                         "signature 'acsp'",
+                         {.element = path()});
+        }
+        return profile;
     }
 
     // -----------------------------------------------------------------------------------------------------------------

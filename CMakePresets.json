@@ -363,6 +363,24 @@
       }
     },
     {
+      "name": "linux-clang-tsan-tbb",
+      "inherits": [
+        "linux-clang-tsan",
+        "vcpkg"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "OPENXISF_WITH_TBB": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-tsan",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg",
+        "VCPKG_MANIFEST_FEATURES": "tests;tbb"
+      }
+    },
+    {
       "name": "linux-clang-fuzz",
       "inherits": [
         "linux-clang"
@@ -580,6 +598,15 @@
     {
       "name": "linux-clang-tsan",
       "configurePreset": "linux-clang-tsan",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-clang-tsan-tbb",
+      "configurePreset": "linux-clang-tsan-tbb",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -898,6 +925,26 @@
     {
       "name": "linux-clang-tsan",
       "configurePreset": "linux-clang-tsan",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "filter": {
+        "exclude": {
+          "label": "package"
+        }
+      }
+    },
+    {
+      "name": "linux-clang-tsan-tbb",
+      "configurePreset": "linux-clang-tsan-tbb",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",

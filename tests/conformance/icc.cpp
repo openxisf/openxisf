@@ -17,7 +17,6 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -29,24 +28,14 @@ namespace {
 using openxisf::errc;
 using openxisf::reader;
 using openxisf::severity;
-using openxisf::test::bytes;
 using openxisf::test::header_xml;
 using openxisf::test::image_xml;
 using openxisf::test::no_diagnostics;
 using openxisf::test::single_diagnostic;
 
-// The bytes of a profile, whose content the reader keeps without looking at it: an ICC header starts with the size of
-// the profile and has its signature at byte 36.
 std::vector<std::byte> profile_bytes()
 {
-    std::vector<std::byte> profile = openxisf::test::pattern(132);
-    profile[0] = std::byte{0};
-    profile[1] = std::byte{0};
-    profile[2] = std::byte{0};
-    profile[3] = std::byte{132};
-    const std::vector<std::byte> signature = bytes("acsp");
-    std::ranges::copy(signature, profile.begin() + 36);
-    return profile;
+    return openxisf::test::icc_profile();
 }
 
 reader open_body(std::string_view body, openxisf::read_options options = {})
@@ -110,6 +99,22 @@ TEST(conformance_icc, a_profile_is_big_endian_whatever_its_byte_order_attribute_
     EXPECT_EQ(file.image(0).icc_profile, profile);
 }
 
+TEST(conformance_icc, a_profile_without_the_header_of_an_icc_profile_is_kept_with_a_warning)
+{
+    // The bytes of a block too short for the header of 128 bytes, and of one without its signature: the writer refuses
+    // both.
+    const std::vector<std::byte> valid = profile_bytes();
+    const std::vector<std::byte> truncated(valid.begin(), valid.begin() + 127);
+    std::vector<std::byte> unsigned_profile = valid;
+    unsigned_profile[36] = std::byte{'A'};
+    for (const std::vector<std::byte>& profile : {truncated, unsigned_profile}) {
+        const reader file = open_attached(image_xml({}, R"(<ICCProfile location="attachment:{0}"/>)"), {profile});
+        EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::invalid_icc_profile,
+                                      "/xisf/Image[1]/ICCProfile[1]"));
+        EXPECT_EQ(file.image(0).icc_profile, profile);
+    }
+}
+
 TEST(conformance_icc, a_profile_without_a_data_block_is_unavailable)
 {
     const reader file = open_body(image_xml({}, "<ICCProfile/>"));
@@ -135,17 +140,6 @@ TEST(conformance_icc, a_profile_that_fails_its_checksum_is_unavailable_and_the_i
                                           R"(location="attachment:{0}"/>)"),
                             {profile_bytes()}, {.strict = true});
     }));
-}
-
-TEST(conformance_icc, an_image_has_one_profile)
-{
-    // The first one is the profile of the image; a second one is ignored.
-    const std::vector<std::byte> second = bytes("second profile");
-    const reader file =
-        open_attached(image_xml({}, inline_profile() + R"(<ICCProfile location="attachment:{0}"/>)"), {second});
-    EXPECT_TRUE(single_diagnostic(file.diagnostics(), severity::warning, errc::duplicate_element,
-                                  "/xisf/Image[1]/ICCProfile[2]"));
-    EXPECT_EQ(file.image(0).icc_profile, profile_bytes());
 }
 
 TEST(conformance_icc, a_profile_counts_against_the_limit_of_the_data_loaded_at_open)

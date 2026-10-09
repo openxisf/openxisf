@@ -7,12 +7,12 @@
 #include "codec/compressed_block.h"
 #include "container/unit_writer.h"
 #include "core/quote.h"
-#include "core/utf8.h"
 #include "core/uuid.h"
 #include "core/xoshiro.h"
 #include "io/paths.h"
 #include "model/unit_contents.h"
 #include "model/validation.h"
+#include "xml/xml_writer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -47,17 +47,16 @@ bool has_suffix(std::string_view path, std::string_view suffix) noexcept
 // cannot hold in an attribute.
 void check_blocks_path(std::string_view path)
 {
+    detail::check_path_argument(path, "the path of the data blocks file");
     std::string problem;
-    if (!detail::is_valid_utf8(path)) {
-        throw usage_error(errc::invalid_utf8, "the path of the data blocks file is not valid UTF-8");
-    }
     if (!has_suffix(path, ".xisb")) {
         problem = "does not end with .xisb (spec §9.6)";
     } else if (path.starts_with('/')) {
         problem = "is absolute";
     } else if (std::ranges::any_of(
-                   path, [](char c) { return c == '\\' || static_cast<unsigned char>(c) < 0x20 || c == 0x7F; })) {
-        problem = "holds a backslash or a control character";
+                   path, [](char c) { return c == '\\' || static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }) ||
+               !detail::is_xml_text(path)) {
+        problem = "holds a backslash, a control character or a character that XML cannot hold";
     } else {
         for (std::string_view rest = path; !rest.empty();) {
             const std::size_t slash = rest.find('/');
@@ -106,6 +105,16 @@ void write_valid_unit(const detail::unit_contents& unit, const write_options& op
 {
     const std::vector<std::string> uuids = image_uuids(unit.images, options.generate_uuids);
     detail::write_unit(unit, options, {.creation_time = creation_time_of(options), .uuids = uuids}, sink);
+}
+
+// The positions in a file count from its first byte (spec §9.2, §9.4), so a sink receives one file, from its start.
+void check_empty(const output_sink& sink, std::string_view file)
+{
+    if (sink.position() != 0) {
+        throw usage_error(errc::invalid_argument, "the sink of the " + std::string(file) + " already holds " +
+                                                      std::to_string(sink.position()) +
+                                                      " bytes, and a sink receives one file, from its start");
+    }
 }
 
 // The identifiers of the block index elements are random, as the specification recommends (spec §9.4).
@@ -176,8 +185,14 @@ std::size_t writer::add_image(image_info info, std::span<const std::byte> pixels
         throw usage_error(errc::invalid_argument, "the pixel data have " + std::to_string(pixels.size()) +
                                                       " bytes, and the image " + std::to_string(info.data_size()));
     }
-    state_->images.push_back(std::move(info));
+    // The two vectors keep the same size, which the save relies on, even when the second cannot grow.
     state_->pixels.push_back(pixels);
+    try {
+        state_->images.push_back(std::move(info));
+    } catch (...) {
+        state_->pixels.pop_back();
+        throw;
+    }
     return state_->images.size() - 1;
 }
 
@@ -208,6 +223,7 @@ void writer::save(std::string_view path) const
 
 void writer::save(output_sink& sink) const
 {
+    check_empty(sink, "unit");
     detail::validate_unit(*state_, state_->options);
     write_valid_unit(*state_, state_->options, sink);
 }
@@ -232,6 +248,8 @@ void writer::save_distributed(output_sink& header, output_sink& blocks, std::str
     if (&header == &blocks) {
         throw usage_error(errc::invalid_argument, "the header file and the data blocks file need two sinks");
     }
+    check_empty(header, "header file");
+    check_empty(blocks, "data blocks file");
     check_blocks_path(blocks_path);
     detail::validate_unit(*state_, state_->options);
     write_valid_distributed_unit(*state_, state_->options, header, blocks, blocks_path);

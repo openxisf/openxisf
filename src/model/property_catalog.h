@@ -8,7 +8,10 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 // The reserved property identifiers of the specification and their types: the metadata properties of the XISF
 // namespace (spec §11.4), and the astronomical properties of the Observer, Organization, Observation, Instrument,
@@ -18,6 +21,10 @@ namespace openxisf::detail {
 
 /// The type that the specification gives the property id, or nothing when id is not a reserved identifier.
 [[nodiscard]] std::optional<property_type> reserved_property_type(std::string_view id) noexcept;
+
+/// Every reserved identifier with its type, as reserved_property_type() gives it: the properties of a distortion model
+/// once under the prefix of each direction.
+[[nodiscard]] std::vector<std::pair<std::string, property_type>> reserved_property_types();
 
 /// True when id is in the namespace of the metadata properties, XISF: (spec §11.4).
 [[nodiscard]] bool is_metadata_id(std::string_view id) noexcept;

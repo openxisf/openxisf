@@ -8,13 +8,14 @@
 #include <openxisf/property.h>
 #include <openxisf/reader.h>
 
+#include "support/threads.h"
+
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <cstddef>
 #include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -23,7 +24,7 @@ using openxisf::astrometric_solution;
 using openxisf::celestial_point;
 using openxisf::image_point;
 
-constexpr int thread_count = 16;
+constexpr std::size_t thread_count = 16;
 
 TEST(concurrency_astrometry, threads_evaluate_one_solution_at_once)
 {
@@ -44,26 +45,19 @@ TEST(concurrency_astrometry, threads_evaluate_one_solution_at_once)
     }
 
     std::atomic<int> failures{0};
-    std::vector<std::thread> threads;
-    threads.reserve(thread_count);
-    for (int t = 0; t < thread_count; ++t) {
-        threads.emplace_back([&, t] {
-            // Every thread copies the solution, and half of them use their copy, which shares its data.
-            astrometric_solution copy{openxisf::property_list{}};
-            copy = solved;
-            const astrometric_solution& used = t % 2 == 0 ? solved : copy;
-            for (std::size_t i = 0; i < points.size(); ++i) {
-                const std::size_t k = (i + static_cast<std::size_t>(t)) % points.size();
-                const std::optional<celestial_point> sky = used.image_to_celestial(points[k]);
-                if (sky != skies[k] || (sky && used.celestial_to_image(*sky) != images[k])) {
-                    failures.fetch_add(1);
-                }
+    openxisf::test::run_threads(thread_count, [&](std::size_t t) {
+        // Every thread copies the solution, and half of them use their copy, which shares its data.
+        astrometric_solution copy{openxisf::property_list{}};
+        copy = solved;
+        const astrometric_solution& used = t % 2 == 0 ? solved : copy;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            const std::size_t k = (i + t) % points.size();
+            const std::optional<celestial_point> sky = used.image_to_celestial(points[k]);
+            if (sky != skies[k] || (sky && used.celestial_to_image(*sky) != images[k])) {
+                failures.fetch_add(1);
             }
-        });
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
+        }
+    });
     EXPECT_EQ(failures.load(), 0);
 }
 

@@ -76,12 +76,10 @@ template <xisf_float T> std::complex<T> parse_complex(std::string_view text)
     return {parse_float<T>(parts.real), parse_float<T>(parts.imag)};
 }
 
-std::string_view check_complex128(std::string_view text)
+std::string check_complex128(std::string_view text)
 {
     const complex_parts parts = split_complex(text);
-    (void)check_float128(parts.real);
-    (void)check_float128(parts.imag);
-    return trim_white_space(text);
+    return '(' + std::string(check_float128(parts.real)) + ',' + std::string(check_float128(parts.imag)) + ')';
 }
 
 template <xisf_float T> std::string format_complex(std::complex<T> value)
@@ -119,13 +117,13 @@ property_value parse_value_attribute(property_type type, std::string_view text)
     case property_type::float64:
         return parse_float<double>(text);
     case property_type::float128:
-        return property_value::from_float128_text(std::string(check_float128(text)));
+        return property_value::from_float128_text(check_float128(text));
     case property_type::complex32:
         return parse_complex<float>(text);
     case property_type::complex64:
         return parse_complex<double>(text);
     case property_type::complex128:
-        return property_value::from_complex128_text(std::string(check_complex128(text)));
+        return property_value::from_complex128_text(check_complex128(text));
     case property_type::time_point:
         return parse_time_point(text);
     default:

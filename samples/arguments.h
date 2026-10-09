@@ -69,10 +69,10 @@ inline std::vector<std::string> utf8_arguments([[maybe_unused]] int argc, [[mayb
             arguments.push_back(to_utf8(wide[i]));
         }
     } catch (...) {
-        LocalFree(wide);
+        LocalFree(static_cast<HLOCAL>(wide));
         throw;
     }
-    LocalFree(wide);
+    LocalFree(static_cast<HLOCAL>(wide));
     return arguments;
 #else
     return {argv, argv + argc};

@@ -64,10 +64,9 @@ std::string describe(std::error_code error)
     throw io_error(errc::not_a_regular_file, path + " is not a regular file");
 }
 
-// The path for the wide functions of the system: absolute, normalized as Windows normalizes every path, and with the
-// \\?\ prefix, which lifts the limit of MAX_PATH (260) characters. Device paths (\\.\) keep their form. Returns an
-// empty string when GetFullPathNameW() fails, and GetLastError() tells why.
-std::wstring system_path(const std::string& path)
+// path, absolute and normalized as Windows normalizes every path. Returns an empty string when GetFullPathNameW()
+// fails, and GetLastError() tells why.
+std::wstring full_path(const std::string& path)
 {
     const std::u16string utf16 = utf8_to_utf16(path);
     const std::wstring given(utf16.begin(), utf16.end());
@@ -81,7 +80,18 @@ std::wstring system_path(const std::string& path)
         return {};
     }
     full.resize(length);
+    return full;
+}
 
+// The path for the wide functions of the system: absolute, normalized as Windows normalizes every path, and with the
+// \\?\ prefix, which lifts the limit of MAX_PATH (260) characters. Device paths (\\.\) keep their form. Returns an
+// empty string when GetFullPathNameW() fails, and GetLastError() tells why.
+std::wstring system_path(const std::string& path)
+{
+    std::wstring full = full_path(path);
+    if (full.empty()) {
+        return {};
+    }
     if (full.starts_with(LR"(\\?\)") || full.starts_with(LR"(\\.\)")) {
         return full;
     }
@@ -106,7 +116,8 @@ bool is_directory(const std::wstring& path) noexcept
 }
 
 // Renames an open file over target with POSIX semantics, which replace a target that other programs have open, as a
-// rename does on POSIX systems. Windows 10 1607 and later support it on NTFS. Returns false where it is not supported.
+// rename does on POSIX systems, provided that they opened it with FILE_SHARE_DELETE, as file_source does; the rename
+// fails otherwise. Windows 10 1607 and later support it on NTFS. Returns false where it is not supported.
 bool rename_by_handle(HANDLE handle, const std::wstring& target, const std::string& name)
 {
     // FILE_RENAME_INFO ends with the name, which extends beyond the structure.
@@ -132,6 +143,19 @@ bool rename_by_handle(HANDLE handle, const std::wstring& target, const std::stri
 }
 
 } // namespace
+
+std::string absolute_path(const std::string& path)
+{
+    const std::wstring full = full_path(path);
+    if (full.empty()) {
+        fail(errc::open_failed, "cannot make " + path + " absolute", last_error());
+    }
+    try {
+        return utf16_to_utf8(std::u16string(full.begin(), full.end()));
+    } catch (const invalid_data_error&) {
+        throw io_error(errc::open_failed, "the absolute path of " + path + " is not valid UTF-16");
+    }
+}
 
 native_file native_file::open_for_reading(const std::string& path)
 {
@@ -178,7 +202,7 @@ std::optional<native_file> native_file::create_new(const std::string& path, std:
     return native_file(handle, std::move(name));
 }
 
-std::string native_file::canonical_path(const std::string& path)
+native_file native_file::find(const std::string& path)
 {
     const std::wstring wide = system_path(path);
     if (wide.empty()) {
@@ -191,7 +215,7 @@ std::string native_file::canonical_path(const std::string& path)
     if (handle == INVALID_HANDLE_VALUE) {
         fail(errc::open_failed, "cannot find " + path, last_error());
     }
-    const native_file opened(handle, path);
+    native_file found(handle, path);
     if (GetFileType(handle) != FILE_TYPE_DISK) {
         fail_not_regular(path);
     }
@@ -209,13 +233,32 @@ std::string native_file::canonical_path(const std::string& path)
         if (length != 0 && length < final_path.size()) {
             final_path.resize(length);
             try {
-                return utf16_to_utf8(std::u16string(final_path.begin(), final_path.end()));
+                found.name_ = utf16_to_utf8(std::u16string(final_path.begin(), final_path.end()));
             } catch (const invalid_data_error&) {
                 throw io_error(errc::open_failed, "the canonical path of " + path + " is not valid UTF-16");
             }
+            return found;
         }
     }
     fail(errc::open_failed, "cannot resolve " + path, last_error());
+}
+
+native_file native_file::reopen_for_reading() const
+{
+    // The file of the handle, not the file that its path names: Windows trims the dots and spaces that end each step
+    // of a path that it normalizes, so the canonical path of a directory named "sub." would open "sub" instead.
+    BY_HANDLE_FILE_INFORMATION information{};
+    if (GetFileInformationByHandle(handle_, &information) == FALSE) {
+        fail(errc::open_failed, "cannot open " + name_, last_error());
+    }
+    if ((information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        fail_not_regular(name_);
+    }
+    HANDLE handle = ReOpenFile(handle_, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    if (handle == INVALID_HANDLE_VALUE) {
+        fail(errc::open_failed, "cannot open " + name_, last_error());
+    }
+    return {handle, name_};
 }
 
 std::uint64_t native_file::size() const

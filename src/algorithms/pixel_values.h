@@ -23,8 +23,8 @@
 namespace openxisf::detail {
 
 /// The representable range of image, for an algorithm over its pixel data, after checking that the image has real
-/// samples, finite bounds in increasing order when it has bounds, and pixel data of pixel_bytes bytes. Throws
-/// usage_error with errc::invalid_argument; what names the algorithm in the message.
+/// samples, finite bounds in increasing order whose width is finite too when it has bounds, and pixel data of
+/// pixel_bytes bytes. Throws usage_error with errc::invalid_argument; what names the algorithm in the message.
 [[nodiscard]] bounds checked_range(const image_info& image, std::size_t pixel_bytes, std::string_view what);
 
 /// Equation [4] with a device range of [0, 1]: value mapped from range, clipped.

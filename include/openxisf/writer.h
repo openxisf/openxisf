@@ -68,23 +68,28 @@ struct write_options
     /// (XISF:CreatorApplication). Required.
     std::string creator_application{};
     /// When the units were created (XISF:CreationTime); the time of each save, to the millisecond, when empty. With a
-    /// fixed time, a model is written the same way, byte for byte, every time.
+    /// fixed time, save() writes a model the same way, byte for byte, every time, but for the new UUIDs of
+    /// generate_uuids. The units of save_distributed() differ every time: the identifiers of their blocks are random.
     std::optional<date_time> creation_time{};
     /// Compress the data blocks with this codec; none when empty. A block that the codec does not make smaller is
     /// written uncompressed.
     std::optional<openxisf::codec> codec{};
-    /// The compression level (spec §11.4.2): from 1, the fastest, to 100, the smallest, or 0 for the default of the
-    /// codec.
+    /// The compression level (spec §11.4.2): from 1, the least compression, to 100, the most, or 0 for the default of
+    /// the codec. The levels of each codec map linearly onto 1 to 100, as the specification asks, so for zlib, whose
+    /// levels are 0 to 9, levels 1 to 6 are its level 0, which does not compress: the blocks are then written
+    /// uncompressed. LZ4 has no levels.
     int compression_level = 0;
     /// Shuffle the bytes of each block of multibyte numbers before it is compressed (spec §10.6.2), which helps pixel
     /// data. It applies with a codec only.
     bool byte_shuffle = false;
     /// The largest piece of a compressed block, before compression, in bytes: a block is divided into subblocks of this
     /// size, which decoders can decompress in parallel, and which OpenXISF built with oneTBB compresses and
-    /// decompresses in parallel. Subblocks of 1 to 4 MiB cost little: on a 100 MiB image the compression ratio stays
-    /// within 0.3% of that of a single block. With 0, blocks are divided only where a codec requires it. A subblock
-    /// that the codec does not make smaller is stored as it is, with equal compressed and uncompressed sizes, as
-    /// PixInsight stores and reads such subblocks; decoders that know only the specification may not read them.
+    /// decompresses in parallel; each thread then holds the state of its codec, which at the highest Zstandard levels
+    /// takes many times a subblock of a few MiB. Subblocks of 1 to 4 MiB cost little: on a 100 MiB image the
+    /// compression ratio stays within 0.3% of that of a single block. With 0, blocks are divided only where a codec
+    /// requires it. A subblock that the codec does not make smaller is stored as it is, with equal compressed and
+    /// uncompressed sizes, as PixInsight stores and reads such subblocks; decoders that know only the specification may
+    /// not read them.
     std::uint64_t subblock_size = 0;
     /// Give each data block a checksum with this algorithm; none when empty.
     std::optional<checksum_algorithm> checksum{};
@@ -117,10 +122,24 @@ struct write_options
 /// each image, as a monolithic file (spec §9.2) with save(), or as a distributed unit (spec §9.1.2) with
 /// save_distributed(): a header file and a data blocks file, which the header locates relative to its own directory.
 ///
+/// The writer never signs a unit. A unit read from a signed one is written unsigned, since the writer writes a new
+/// header, which the signature of the old one does not cover (spec §9.5).
+///
+/// The model is written as it is given, but for what the specification makes an encoder compute: the embedded-profile
+/// flag of each ICC profile is set (bit 0 of byte 47, spec §11.7), and each RGB working space is written with the
+/// luminance coefficients that its chromaticities give (spec §11.8.1), which may differ from those given within the
+/// tolerance that the checks allow. A unit read back holds those values. The writer writes no uid attribute and no
+/// Reference element: what several images share is written for each of them. A String value is written as character
+/// data (spec §11.1.6), or in a data block when XML cannot hold it or it is longer than 1 MiB, since readers limit the
+/// size of a header (limits::max_header_size, 64 MiB by default). A model read from a unit is accepted as
+/// it is when the reader gave no warning, but for an image that a Reference lists again, which has the id of the image
+/// it copies, and a TimePoint whose instant in UTC is beyond the years 0 to 9999 (date_time).
+///
 /// save() checks the whole model against the specification before it writes anything, and throws validation_error,
 /// naming the object, for the first violation. The pixel data are borrowed: they must stay valid and unchanged until
 /// the last save(). A writer is thread-compatible, like a standard container: save() can run on several threads at
-/// once, and a change needs exclusive access.
+/// once, and a change needs exclusive access. It can be moved, and a moved-from writer can only be destroyed or
+/// assigned to.
 class OPENXISF_API writer
 {
 public:
@@ -173,7 +192,10 @@ public:
     /// is replaced only once it is complete: a failed or cancelled save leaves the old file, or none.
     /// @throws usage_error when path is empty, not valid UTF-8, or does not end with .xisf in any case.
     /// @throws validation_error when the unit violates the specification; nothing is written then.
-    /// @throws io_error when the file cannot be written.
+    /// @throws io_error when the file cannot be written, or when the system provides no random data for the name of
+    ///         the temporary file or for UUIDs (errc::entropy_unavailable).
+    /// @throws unsupported_error when a codec or the hashing library fails for another reason than the data, such as
+    ///         a library of another version (errc::codec_failure, errc::hash_failure).
     /// @throws cancelled_error when options().progress returns false.
     void save(std::string_view path) const;
 
@@ -181,6 +203,8 @@ public:
     /// sink pass through unchanged. A sink that can rewrite (output_sink::can_rewrite()) is written once, with the
     /// header written last; any other sink receives the unit in order, so compressed blocks are held in memory until
     /// the header is written.
+    /// @throws usage_error when sink already holds bytes (output_sink::position() is not 0): every position in a unit
+    ///         counts from its first byte, so a sink receives one unit, from its start.
     void save(output_sink& sink) const;
 
     /// Writes the unit as a distributed unit: a header file at path, which is UTF-8 on every platform and ends with
@@ -190,8 +214,11 @@ public:
     /// The identifiers of the blocks are random, so a header file left with another data blocks file, after a failure
     /// between the two replacements, finds none of its blocks there.
     /// @throws usage_error when path is empty, not valid UTF-8, or does not end with .xish in any case, or when its
-    ///         file name holds a control character or a backslash, which the header cannot locate.
-    /// @throws validation_error, io_error or cancelled_error as the other save() does.
+    ///         file name holds a control character, a backslash, or U+FFFE or U+FFFF, which XML cannot hold: the header
+    ///         cannot locate it.
+    /// @throws validation_error, io_error, unsupported_error or cancelled_error as save(std::string_view) does, and
+    ///         io_error when the system provides no random data for the identifiers of the blocks
+    ///         (errc::entropy_unavailable).
     void save_distributed(std::string_view path) const;
 
     /// Writes the unit as a distributed unit to two sinks, with the exceptions of the other save_distributed(): the
@@ -199,9 +226,9 @@ public:
     /// blocks_path, in UNIX syntax (spec §10.3), ending with .xisb. Both sinks are written completely before blocks,
     /// then header, is finished. A sink of blocks that can rewrite is written once, with the block index written last;
     /// any other sink of blocks receives the file in order, so compressed blocks are held in memory first.
-    /// @throws usage_error when header and blocks are the same sink, or blocks_path is not a relative path in UNIX
-    ///         syntax that ends with .xisb in any case: empty, absolute, with a . or .. step, a backslash, or a control
-    ///         character.
+    /// @throws usage_error when header and blocks are the same sink, when either already holds bytes, or when
+    ///         blocks_path is not a relative path in UNIX syntax that ends with .xisb in any case: empty, absolute,
+    ///         with a . or .. step, a backslash, a control character, or U+FFFE or U+FFFF, which XML cannot hold.
     void save_distributed(output_sink& header, output_sink& blocks, std::string_view blocks_path) const;
 
 private:

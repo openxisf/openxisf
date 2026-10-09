@@ -10,8 +10,8 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <optional>
-#include <ranges>
 #include <unordered_map>
 
 namespace openxisf::detail {
@@ -215,8 +215,10 @@ void walk(unit_outline& outline, uid_table& uids, diagnostic_log& log)
     };
     std::vector<frame> stack;
     // The child elements seen so far, by name, for each frame of the stack. The tables are reused from one element to
-    // the next at the same depth, and the depth of the outline is bounded by the nesting of the specification.
-    std::vector<std::unordered_map<std::string_view, std::size_t>> seen;
+    // the next at the same depth, and the depth of the outline is bounded by the nesting of the specification. They are
+    // ordered maps, whose clear() costs the names that a table holds, where a hash table, which keeps its buckets,
+    // would make every later element at the depth of one with many children pay for them.
+    std::vector<std::map<std::string_view, std::size_t>> seen;
     const auto enter = [&stack, &seen](std::size_t index, const pugi::xml_node& element) {
         stack.push_back({.index = index, .next = first_child_element(element)});
         if (seen.size() < stack.size()) {
@@ -320,8 +322,9 @@ std::string unit_outline::path(std::size_t index) const
     for (std::size_t i = index; i != no_element; i = elements[i].parent) {
         chain.push_back(i);
     }
+    std::ranges::reverse(chain);
     std::string result = "/" + std::string(root.name());
-    for (const std::size_t i : std::views::reverse(chain)) {
+    for (const std::size_t i : chain) {
         append_step(result, elements[i].node.name(), elements[i].position);
     }
     return result;

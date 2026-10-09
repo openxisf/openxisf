@@ -65,10 +65,17 @@ function(openxisf_enable_hardening target)
     endif()
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # _FORTIFY_SOURCE needs optimization; distributions may already define it, hence the -U.
+        # _FORTIFY_SOURCE needs optimization, which glibc warns about otherwise, so only the optimized configurations
+        # get it (not Debug, nor an empty CMAKE_BUILD_TYPE); distributions may already define it, hence the -U. glibc
+        # grants level 3 to GCC 12 and later only, and warns that it treats it as 2 under an older GCC.
+        set(fortify_level 3)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 12)
+            set(fortify_level 2)
+        endif()
+        set(optimized "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
         target_compile_options(${target} PRIVATE
-            "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>"
-            "$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>")
+            "$<${optimized}:-U_FORTIFY_SOURCE>"
+            "$<${optimized}:-D_FORTIFY_SOURCE=${fortify_level}>")
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
             target_compile_options(${target} PRIVATE -fcf-protection)
         elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")

@@ -434,11 +434,17 @@ TEST(celestial_sphere, points_beyond_the_domain_of_a_projection_have_no_coordina
     EXPECT_FALSE(deproject(projection_system::zenithal_equal_area, {.u = 0.0, .v = 2.0 * r * 1.001}));
     EXPECT_FALSE(deproject(projection_system::orthographic, {.u = r * 1.001, .v = 0.0}));
     EXPECT_FALSE(deproject(projection_system::plate_carree, {.u = 0.0, .v = 90.5}));
-    EXPECT_TRUE(deproject(projection_system::plate_carree, {.u = 200.0, .v = 90.0}));
+    // Beyond 180 degrees from the reference point, the cylindrical projections give the native longitude that the
+    // rotation reduces modulo 360, as PixInsight 1.9.5 does; WCSLIB gives no coordinates there.
+    EXPECT_EQ(value_of(deproject(projection_system::plate_carree, {.u = 200.0, .v = 90.0})).phi, 200.0);
+    EXPECT_EQ(value_of(deproject(projection_system::mercator, {.u = -190.0, .v = 0.0})).phi, -190.0);
     EXPECT_FALSE(deproject(projection_system::hammer_aitoff, {.u = 2.0 * std::numbers::sqrt2 * r * 1.001, .v = 0.0}));
     EXPECT_TRUE(deproject(projection_system::hammer_aitoff, {.u = 2.0 * std::numbers::sqrt2 * r * 0.999, .v = 0.0}));
-    // The Gnomonic, Stereographic and Mercator projections cover the whole plane.
+    // The Stereographic and Mercator projections cover the whole plane, and the Gnomonic one all of it within the limit
+    // of the reference implementation, which is 3.28e6 degrees from the reference point on the plane.
     EXPECT_TRUE(deproject(projection_system::gnomonic, {.u = 1e6, .v = -1e6}));
+    EXPECT_TRUE(deproject(projection_system::gnomonic, {.u = 0.0, .v = 3.2e6}));
+    EXPECT_FALSE(deproject(projection_system::gnomonic, {.u = 0.0, .v = 3.3e6}));
     EXPECT_TRUE(deproject(projection_system::stereographic, {.u = 1e6, .v = -1e6}));
     EXPECT_TRUE(deproject(projection_system::mercator, {.u = 100.0, .v = 1e4}));
 }

@@ -6,6 +6,7 @@
 #include <openxisf/error.h>
 
 #include "core/endian.h"
+#include "core/hex.h"
 #include "core/quote.h"
 
 #include <cstdint>
@@ -21,21 +22,6 @@ constexpr std::size_t canonical_length = 36;
 bool hyphen_after(std::size_t byte_index) noexcept
 {
     return byte_index == 4 || byte_index == 6 || byte_index == 8 || byte_index == 10;
-}
-
-// The value of a hexadecimal digit in either case, or 16.
-unsigned digit_value(char c) noexcept
-{
-    if (c >= '0' && c <= '9') {
-        return static_cast<unsigned>(c - '0');
-    }
-    if (c >= 'a' && c <= 'f') {
-        return static_cast<unsigned>(c - 'a') + 10U;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return static_cast<unsigned>(c - 'A') + 10U;
-    }
-    return 16;
 }
 
 } // namespace
@@ -60,7 +46,6 @@ bool is_version_4_uuid(const uuid& id) noexcept
 
 std::string format_uuid(const uuid& id)
 {
-    constexpr std::string_view hex_digits = "0123456789abcdef";
     std::string text;
     text.reserve(canonical_length);
     for (std::size_t i = 0; i < id.size(); ++i) {
@@ -88,8 +73,8 @@ uuid parse_uuid(std::string_view text)
         if (hyphen_after(i) && text[position++] != '-') {
             throw invalid();
         }
-        const unsigned high = digit_value(text[position++]);
-        const unsigned low = digit_value(text[position++]);
+        const unsigned high = hex_digit_value(text[position++]);
+        const unsigned low = hex_digit_value(text[position++]);
         if (high > 15 || low > 15) {
             throw invalid();
         }

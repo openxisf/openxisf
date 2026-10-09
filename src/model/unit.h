@@ -10,6 +10,7 @@
 
 #include "container/data_block.h"
 #include "io/thread_safe_source.h"
+#include "model/header.h"
 #include "model/images.h"
 #include "model/properties.h"
 
@@ -39,8 +40,8 @@ struct unit
     /// True when the ancillary data in data blocks are loaded.
     bool ancillary_loaded = true;
     unit_storage storage = unit_storage::monolithic;
-    /// The detached signature, kept as written.
-    std::optional<std::string> signature{};
+    /// The detached signature and the root element that it signs, kept as written.
+    std::optional<header_signature> signature{};
     std::vector<data_block> blocks{};
     /// The properties of the unit and its standalone properties; the images and thumbnails hold their own.
     unit_properties properties{};

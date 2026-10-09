@@ -7,6 +7,7 @@
 
 #include "codec/codecs.h"
 #include "codec/shuffle.h"
+#include "core/allocation.h"
 #include "core/checked_math.h"
 #include "core/parallel.h"
 #include "core/scratch_buffer.h"
@@ -22,8 +23,8 @@ namespace {
 
 constexpr int highest_level = 100;
 
-// The subblocks that compress_subblocks() compresses at once hold at most about this many bytes, unless one alone is
-// larger.
+// The subblocks that compress_subblocks() compresses at once take at most about this many bytes of data, unless one
+// alone is larger; their shuffled copies and the output of the codec take about as much again.
 constexpr std::uint64_t parallel_compression_budget = std::uint64_t{1} << 30;
 
 // The sum of the sizes, or nothing when it does not fit in 64 bits.
@@ -211,18 +212,16 @@ std::vector<subblock> subblocks_of(const block_compression& compression, std::ui
 namespace {
 
 // The decompressed block is allocated by the library: its uncompressed size must be within the limit.
-void check_allocation(const block_compression& compression, const limits& limits)
+void check_decompressed_allocation(const block_compression& compression, const limits& limits)
 {
-    if (limits.max_allocation != 0 && compression.uncompressed_size > limits.max_allocation) {
-        throw limit_error(errc::allocation_too_large,
-                          "the data block decompresses to " + std::to_string(compression.uncompressed_size) +
-                              " bytes, more than the allocation limit of " + std::to_string(limits.max_allocation));
-    }
+    check_allocation(compression.uncompressed_size, limits, "the data block decompresses to");
 }
 
 // Decompresses the subblocks of a block, which subblocks_of() checked, each into its place in data, which has the
 // uncompressed size of the block. The subblocks are independent, so each batch of as many as the threads that can run
 // at once is decompressed in parallel; progress follows on the calling thread, subblock by subblock, after each batch.
+// A Zstandard frame that does not declare its size is a batch of its own: it needs a window buffer of up to
+// limits.max_zstd_window, which then bounds the memory of the whole read, not that of each thread.
 void decompress_subblocks(std::span<const std::byte> stored, compression_codec codec,
                           const std::vector<subblock>& subblocks, const limits& limits, std::span<std::byte> data,
                           const subblock_progress& progress)
@@ -251,15 +250,25 @@ void decompress_subblocks(std::span<const std::byte> stored, compression_codec c
                                                       std::to_string(subblocks.size()) + ": " + failure.what());
         }
     };
+    const auto needs_window = [&](std::size_t i) {
+        return codec == compression_codec::zstd && !stored_as_is(subblocks[i]) &&
+               zstd_needs_window(stored.subspan(in[i], in[i + 1] - in[i]));
+    };
     const std::size_t batch = concurrency();
-    for (std::size_t first = 0; first < subblocks.size(); first += batch) {
-        const std::size_t count = std::min(batch, subblocks.size() - first);
+    for (std::size_t first = 0; first < subblocks.size();) {
+        std::size_t count = 1;
+        if (!needs_window(first)) {
+            while (count < batch && first + count < subblocks.size() && !needs_window(first + count)) {
+                ++count;
+            }
+        }
         parallel_for(count, [&](std::size_t k) { decompress(first + k); });
         if (progress) {
             for (std::size_t i = first; i < first + count; ++i) {
                 progress(out[i + 1]);
             }
         }
+        first += count;
     }
 }
 
@@ -272,7 +281,7 @@ void decompress_into(std::span<const std::byte> stored, const block_compression&
         decompress_subblocks(stored, compression.codec, subblocks, limits, destination, progress);
         return;
     }
-    check_allocation(compression, limits);
+    check_decompressed_allocation(compression, limits);
     // The subblocks fill it or throw.
     scratch_buffer shuffled(destination.size());
     decompress_subblocks(stored, compression.codec, subblocks, limits, shuffled.bytes(), progress);
@@ -285,7 +294,7 @@ std::vector<std::byte> decompress_block(std::span<const std::byte> stored, const
                                         const limits& limits, const subblock_progress& progress)
 {
     const std::vector<subblock> subblocks = subblocks_of(compression, stored.size());
-    check_allocation(compression, limits);
+    check_decompressed_allocation(compression, limits);
     std::vector<std::byte> data(checked_cast<std::size_t>(compression.uncompressed_size));
     decompress_into(stored, compression, subblocks, limits, data, progress);
     return data;

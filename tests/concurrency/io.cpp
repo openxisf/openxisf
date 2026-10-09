@@ -10,8 +10,10 @@
 #include "core/xoshiro.h"
 #include "io/thread_safe_source.h"
 #include "support/bytes.h"
+#include "support/cursor_source.h"
 #include "support/files.h"
 #include "support/temp_directory.h"
+#include "support/threads.h"
 
 #include <gtest/gtest.h>
 
@@ -24,7 +26,6 @@
 #include <span>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -33,7 +34,7 @@ using openxisf::detail::thread_safe_source;
 using openxisf::test::pattern;
 using openxisf::test::temp_directory;
 
-constexpr int thread_count = 16;
+constexpr std::size_t thread_count = 16;
 constexpr int reads_per_thread = 200;
 constexpr std::size_t max_read = std::size_t{64} << 10;
 
@@ -42,69 +43,25 @@ constexpr std::size_t max_read = std::size_t{64} << 10;
 template <typename Source> int read_from_threads(const Source& source, std::span<const std::byte> expected)
 {
     std::atomic<int> wrong{0};
-    std::vector<std::thread> threads;
-    threads.reserve(thread_count);
-    for (int t = 0; t < thread_count; ++t) {
-        threads.emplace_back([&source, expected, &wrong, t] {
-            openxisf::detail::xoshiro256starstar random({1, 2, 3, static_cast<std::uint64_t>(t) + 1});
-            std::vector<std::byte> destination;
-            for (int i = 0; i < reads_per_thread; ++i) {
-                const std::size_t offset = random() % expected.size();
-                const std::size_t length = random() % std::min(max_read, expected.size() - offset);
-                destination.resize(length);
-                try {
-                    source.read(offset, destination);
-                    if (!std::ranges::equal(destination, expected.subspan(offset, length))) {
-                        ++wrong;
-                    }
-                } catch (const std::exception&) {
+    openxisf::test::run_threads(thread_count, [&source, expected, &wrong](std::size_t t) {
+        openxisf::detail::xoshiro256starstar random({1, 2, 3, t + 1});
+        std::vector<std::byte> destination;
+        for (int i = 0; i < reads_per_thread; ++i) {
+            const std::size_t offset = random() % expected.size();
+            const std::size_t length = random() % std::min(max_read, expected.size() - offset);
+            destination.resize(length);
+            try {
+                source.read(offset, destination);
+                if (!std::ranges::equal(destination, expected.subspan(offset, length))) {
                     ++wrong;
                 }
+            } catch (const std::exception&) {
+                ++wrong;
             }
-        });
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
+        }
+    });
     return wrong;
 }
-
-// A source written the simple way, with a cursor: it reads correctly only when its calls do not overlap, which it
-// records. ThreadSanitizer would also report the race on the cursor.
-class cursor_source final : public openxisf::input_source
-{
-public:
-    explicit cursor_source(std::span<const std::byte> data) : data_(data) {}
-
-    std::uint64_t size() const override
-    {
-        return data_.size();
-    }
-
-    void read(std::uint64_t offset, std::span<std::byte> destination) const override
-    {
-        if (++active_ != 1) {
-            overlapped_ = true;
-        }
-        cursor_ = offset;
-        std::this_thread::yield();
-        // Another read may have moved the cursor meanwhile. The copy stays within the data, and the wrong bytes show.
-        const std::uint64_t start = std::min<std::uint64_t>(cursor_, data_.size() - destination.size());
-        std::ranges::copy(data_.subspan(start, destination.size()), destination.begin());
-        --active_;
-    }
-
-    [[nodiscard]] bool overlapped() const noexcept
-    {
-        return overlapped_;
-    }
-
-private:
-    std::span<const std::byte> data_;
-    mutable std::uint64_t cursor_ = 0;
-    mutable std::atomic<int> active_{0};
-    mutable std::atomic<bool> overlapped_{false};
-};
 
 TEST(concurrency_io, file_source)
 {
@@ -131,8 +88,8 @@ TEST(concurrency_io, memory_source)
 TEST(concurrency_io, a_source_without_concurrent_reads_is_called_one_read_at_a_time)
 {
     const std::vector<std::byte> data = pattern(std::size_t{1} << 20);
-    auto inner = std::make_unique<cursor_source>(data);
-    const cursor_source& cursor = *inner;
+    auto inner = std::make_unique<openxisf::test::cursor_source>(data);
+    const openxisf::test::cursor_source& cursor = *inner;
     const thread_safe_source source(std::move(inner));
 
     EXPECT_EQ(read_from_threads(source, data), 0);

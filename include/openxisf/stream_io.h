@@ -6,6 +6,10 @@
 #include <openxisf/error.h>
 #include <openxisf/io.h>
 
+#if defined(_WIN32)
+#include <sys/stat.h>
+#endif
+
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +28,42 @@
 
 namespace openxisf {
 
+// The C stream functions of stdio_source and stdio_sink, in the caller's C runtime.
+namespace detail {
+
+// The position of a C stream, or -1 when it cannot seek. The C runtime of Windows gives 0 for a pipe or a device,
+// where a seek succeeds and does nothing, so there the stream must also be on a regular file.
+inline std::int64_t stdio_tell(std::FILE* stream) noexcept
+{
+#if defined(_WIN32)
+    struct _stat64 status{};
+    if (_fstat64(_fileno(stream), &status) != 0 || (status.st_mode & _S_IFMT) != _S_IFREG) {
+        return -1;
+    }
+    return _ftelli64(stream);
+#else
+    return ftello(stream);
+#endif
+}
+
+inline bool stdio_seek(std::FILE* stream, std::int64_t offset, int origin) noexcept
+{
+#if defined(_WIN32)
+    return _fseeki64(stream, offset, origin) == 0;
+#else
+    return fseeko(stream, offset, origin) == 0;
+#endif
+}
+
+// The error of the last call of the C runtime, from errno, which the caller sets to 0 before it.
+inline std::error_code stdio_error() noexcept
+{
+    const int error = errno;
+    return error != 0 ? std::error_code(error, std::generic_category()) : std::error_code();
+}
+
+} // namespace detail
+
 /// A C stream from its position at construction to its end. The stream must be open in binary mode and able to seek.
 /// Reads move its position.
 class stdio_source final : public input_source
@@ -37,19 +77,19 @@ public:
             throw usage_error(errc::invalid_argument, "the FILE stream is null");
         }
         errno = 0;
-        const std::int64_t start = tell(stream_);
-        if (start < 0 || !seek(stream_, 0, SEEK_END)) {
-            throw io_error(errc::not_seekable, "the FILE stream cannot seek", last_error());
+        const std::int64_t start = detail::stdio_tell(stream_);
+        if (start < 0 || !detail::stdio_seek(stream_, 0, SEEK_END)) {
+            throw io_error(errc::not_seekable, "the FILE stream cannot seek", detail::stdio_error());
         }
-        const std::int64_t end = tell(stream_);
+        const std::int64_t end = detail::stdio_tell(stream_);
         if (end < start) {
-            throw io_error(errc::not_seekable, "the FILE stream cannot seek", last_error());
+            throw io_error(errc::not_seekable, "the FILE stream cannot seek", detail::stdio_error());
         }
         start_ = static_cast<std::uint64_t>(start);
         size_ = static_cast<std::uint64_t>(end - start);
     }
 
-    std::uint64_t size() const override
+    [[nodiscard]] std::uint64_t size() const override
     {
         return size_;
     }
@@ -64,47 +104,25 @@ public:
         }
         std::clearerr(stream_);
         errno = 0;
-        if (!seek(stream_, static_cast<std::int64_t>(start_ + offset), SEEK_SET)) {
-            throw io_error(errc::read_failed, "cannot seek in the FILE stream", last_error(), {.offset = offset});
+        if (!detail::stdio_seek(stream_, static_cast<std::int64_t>(start_ + offset), SEEK_SET)) {
+            throw io_error(errc::read_failed, "cannot seek in the FILE stream", detail::stdio_error(),
+                           {.offset = offset});
         }
         if (std::fread(destination.data(), 1, destination.size(), stream_) != destination.size()) {
             // The end of the stream comes early when it is shorter than when the source was made.
             const errc code = std::feof(stream_) != 0 ? errc::end_of_data : errc::read_failed;
-            throw io_error(code, "cannot read the FILE stream", last_error(), {.offset = offset});
+            throw io_error(code, "cannot read the FILE stream", detail::stdio_error(), {.offset = offset});
         }
     }
 
 private:
-    static std::int64_t tell(std::FILE* stream) noexcept
-    {
-#if defined(_WIN32)
-        return _ftelli64(stream);
-#else
-        return ftello(stream);
-#endif
-    }
-
-    static bool seek(std::FILE* stream, std::int64_t offset, int origin) noexcept
-    {
-#if defined(_WIN32)
-        return _fseeki64(stream, offset, origin) == 0;
-#else
-        return fseeko(stream, offset, origin) == 0;
-#endif
-    }
-
-    static std::error_code last_error() noexcept
-    {
-        const int error = errno;
-        return error != 0 ? std::error_code(error, std::generic_category()) : std::error_code();
-    }
-
     std::FILE* stream_;
     std::uint64_t start_ = 0;
     std::uint64_t size_ = 0;
 };
 
-/// A C stream written from its position at construction. It supports rewrite() when it can seek, which a pipe cannot.
+/// A C stream written from its position at construction. The stream must be open in binary mode, or the system may
+/// change the bytes written, such as line ends on Windows. It supports rewrite() when it can seek, which a pipe cannot.
 /// A stream opened in append mode writes every byte at its end, so it must not be given to a sink that rewrites.
 class stdio_sink final : public output_sink
 {
@@ -115,7 +133,7 @@ public:
         if (stream_ == nullptr) {
             throw usage_error(errc::invalid_argument, "the FILE stream is null");
         }
-        const std::int64_t start = tell(stream_);
+        const std::int64_t start = detail::stdio_tell(stream_);
         rewritable_ = start >= 0;
         start_ = rewritable_ ? static_cast<std::uint64_t>(start) : 0;
     }
@@ -124,17 +142,18 @@ public:
     {
         errno = 0;
         if (std::fwrite(data.data(), 1, data.size(), stream_) != data.size()) {
-            throw io_error(errc::write_failed, "cannot write to the FILE stream", last_error(), {.offset = position_});
+            throw io_error(errc::write_failed, "cannot write to the FILE stream", detail::stdio_error(),
+                           {.offset = position_});
         }
         position_ += data.size();
     }
 
-    std::uint64_t position() const override
+    [[nodiscard]] std::uint64_t position() const override
     {
         return position_;
     }
 
-    bool can_rewrite() const override
+    [[nodiscard]] bool can_rewrite() const override
     {
         return rewritable_;
     }
@@ -148,10 +167,11 @@ public:
             throw usage_error(errc::invalid_argument, "a rewrite must stay within the bytes already written");
         }
         errno = 0;
-        if (!seek(stream_, static_cast<std::int64_t>(start_ + offset), SEEK_SET) ||
+        if (!detail::stdio_seek(stream_, static_cast<std::int64_t>(start_ + offset), SEEK_SET) ||
             std::fwrite(data.data(), 1, data.size(), stream_) != data.size() ||
-            !seek(stream_, static_cast<std::int64_t>(start_ + position_), SEEK_SET)) {
-            throw io_error(errc::write_failed, "cannot rewrite the FILE stream", last_error(), {.offset = offset});
+            !detail::stdio_seek(stream_, static_cast<std::int64_t>(start_ + position_), SEEK_SET)) {
+            throw io_error(errc::write_failed, "cannot rewrite the FILE stream", detail::stdio_error(),
+                           {.offset = offset});
         }
     }
 
@@ -159,35 +179,11 @@ public:
     {
         errno = 0;
         if (std::fflush(stream_) != 0) {
-            throw io_error(errc::write_failed, "cannot flush the FILE stream", last_error());
+            throw io_error(errc::write_failed, "cannot flush the FILE stream", detail::stdio_error());
         }
     }
 
 private:
-    static std::int64_t tell(std::FILE* stream) noexcept
-    {
-#if defined(_WIN32)
-        return _ftelli64(stream);
-#else
-        return ftello(stream);
-#endif
-    }
-
-    static bool seek(std::FILE* stream, std::int64_t offset, int origin) noexcept
-    {
-#if defined(_WIN32)
-        return _fseeki64(stream, offset, origin) == 0;
-#else
-        return fseeko(stream, offset, origin) == 0;
-#endif
-    }
-
-    static std::error_code last_error() noexcept
-    {
-        const int error = errno;
-        return error != 0 ? std::error_code(error, std::generic_category()) : std::error_code();
-    }
-
     std::FILE* stream_;
     std::uint64_t start_ = 0;
     std::uint64_t position_ = 0;
@@ -197,6 +193,11 @@ private:
 /// A C++ input stream from its position at construction to its end. The stream must be able to seek, and binary on
 /// platforms where that matters. The source clears the stream's state and moves its position. When the stream's
 /// exceptions() mask is set, the stream's own exceptions pass through unchanged.
+///
+/// A stream buffer cannot be asked what it reads, so the source takes the stream's word that it can seek. On Windows a
+/// file stream on a pipe or a device, such as MSVC's, reports a position and seeks there without effect: it passes for
+/// a stream that can seek, and gives other bytes than those asked for. Read a pipe into a memory_source, or give
+/// stdio_source its FILE*, which is checked.
 class istream_source final : public input_source
 {
 public:
@@ -216,7 +217,7 @@ public:
         size_ = static_cast<std::uint64_t>(end - start);
     }
 
-    std::uint64_t size() const override
+    [[nodiscard]] std::uint64_t size() const override
     {
         return size_;
     }
@@ -249,9 +250,14 @@ private:
     std::uint64_t size_ = 0;
 };
 
-/// A C++ output stream written from its position at construction. It supports rewrite() when the stream can seek. A
-/// stream opened with std::ios::app writes every byte at its end, so it must not be given to a sink that rewrites.
+/// A C++ output stream written from its position at construction. The stream must be binary on platforms where that
+/// matters. It supports rewrite() when the stream can seek. A stream opened with std::ios::app writes every byte at its
+/// end, so it must not be given to a sink that rewrites.
 /// When the stream's exceptions() mask is set, the stream's own exceptions pass through unchanged.
+///
+/// As for istream_source, the sink takes the stream's word that it can seek. On Windows a file stream on a pipe or a
+/// device passes for one that can, and its rewrites are appended, which makes a unit that cannot be read. Write to a
+/// pipe through a callback_sink without a rewrite function, or a stdio_sink, which checks its FILE*.
 class ostream_sink final : public output_sink
 {
 public:
@@ -271,12 +277,12 @@ public:
         position_ += data.size();
     }
 
-    std::uint64_t position() const override
+    [[nodiscard]] std::uint64_t position() const override
     {
         return position_;
     }
 
-    bool can_rewrite() const override
+    [[nodiscard]] bool can_rewrite() const override
     {
         return rewritable_;
     }

@@ -6,6 +6,7 @@
 #include <openxisf/error.h>
 
 #include "core/quote.h"
+#include "core/utc_time.h"
 #include "model/format_specifier.h"
 #include "model/held_size.h"
 #include "model/property_catalog.h"
@@ -27,12 +28,32 @@ namespace {
 // The metadata properties that every unit must have (spec §11.4.1).
 constexpr std::array<std::string_view, 2> mandatory_metadata{"XISF:CreationTime", "XISF:CreatorApplication"};
 
+// The TimePoint that text holds, or nothing when it is not a TimePoint value.
+std::optional<date_time> time_point_held(std::string_view text)
+{
+    try {
+        return parse_time_point(text);
+    } catch (const invalid_data_error&) {
+        return std::nullopt;
+    }
+}
+
 // The properties of one object, as they are associated with it, each identifier once, and the Property element of each.
+// The identifiers include those of the properties whose values are left in their data blocks.
 struct property_set
 {
     std::vector<property> items{};
     std::unordered_set<std::string> ids{};
     std::vector<std::size_t> elements{};
+    std::vector<std::string> deferred_ids{};
+};
+
+// A Property element as read: its property, or nothing when it is unavailable or its value is left in its data block,
+// whose identifier is then kept.
+struct read_property
+{
+    std::optional<property> item{};
+    std::string deferred_id{};
 };
 
 class property_reader
@@ -51,12 +72,13 @@ public:
         solution_checked_.assign(properties_.size(), false);
         unit_properties result;
         result.metadata = metadata();
-        result.standalone = collect(no_element);
+        element_properties standalone = collect(no_element);
+        result.standalone = std::move(standalone.properties);
+        result.standalone_deferred_ids = std::move(standalone.deferred_ids);
         for (std::size_t index = 0; index < outline_.elements.size(); ++index) {
             const element_kind kind = outline_.elements[index].kind;
             if (kind == element_kind::image || kind == element_kind::thumbnail) {
-                result.objects.push_back(
-                    {.element = index, .path = outline_.path(index), .properties = collect(index)});
+                result.objects.push_back(collect(index));
             }
         }
         return result;
@@ -142,16 +164,22 @@ private:
     void add(property_set& set, std::size_t target, std::size_t by, std::string_view owner)
     {
         const std::size_t slot = slots_[target];
-        std::optional<property>& found = properties_[slot];
+        std::optional<property>& found = properties_[slot].item;
+        const std::string& id = found ? found->id : properties_[slot].deferred_id;
         const bool last_use = --uses_[slot] == 0;
-        if (!found) {
+        if (id.empty()) {
             return;
         }
         const error_context context{.element = outline_.path(by), .attribute = by == target ? "id" : "ref"};
-        if (set.ids.contains(found->id)) {
+        if (set.ids.contains(id)) {
             log_.error(errc::duplicate_property_id,
-                       "another property of " + std::string(owner) + " has the identifier " + quote(found->id),
-                       context);
+                       "another property of " + std::string(owner) + " has the identifier " + quote(id), context);
+            return;
+        }
+        if (!found) {
+            // A value left in its data block holds the place of its property, which a full open would read.
+            set.ids.insert(id);
+            set.deferred_ids.push_back(id);
             return;
         }
         if (!last_use && !charge_copy(*found, context)) {
@@ -173,7 +201,8 @@ private:
         return budget_.copy(held_size(item), "the property " + quote(item.id), context, log_);
     }
 
-    property_list collect(std::size_t owner)
+    // The properties of an Image or Thumbnail element, or of the root element (no_element), which has no path.
+    element_properties collect(std::size_t owner)
     {
         const std::string name = owner == no_element ? "the root element" : outline_.path(owner);
         property_set set;
@@ -183,7 +212,10 @@ private:
             }
         });
         check_solution_types(set);
-        return property_list(std::move(set.items));
+        return {.element = owner,
+                .path = owner == no_element ? std::string() : name,
+                .properties = property_list(std::move(set.items)),
+                .deferred_ids = std::move(set.deferred_ids)};
     }
 
     // The properties of the unit: those of its Metadata elements, of which there should be exactly one (spec §11.4).
@@ -236,9 +268,11 @@ private:
         if (!target) {
             return;
         }
-        if (const std::optional<property>& found = properties_[slots_[*target]]; found && !is_metadata_id(found->id)) {
+        const read_property& found = properties_[slots_[*target]];
+        const std::string& id = found.item ? found.item->id : found.deferred_id;
+        if (!id.empty() && !is_metadata_id(id)) {
             log_.warning(errc::invalid_metadata,
-                         "the identifier " + quote(found->id) +
+                         "the identifier " + quote(id) +
                              " is not in the XISF namespace, as those of the properties of the Metadata element are",
                          {.element = outline_.path(index), .attribute = index == *target ? "id" : "ref"});
         }
@@ -248,7 +282,7 @@ private:
     // -----------------------------------------------------------------------------------------------------------------
     // One Property element
 
-    std::optional<property> read_element(std::size_t index, const data_block* block)
+    read_property read_element(std::size_t index, const data_block* block)
     {
         const pugi::xml_node node = outline_.elements[index].node;
         const std::string path = outline_.path(index);
@@ -257,7 +291,7 @@ private:
             log_.error(errc::invalid_property_id,
                        id.empty() ? "the Property element has no id attribute" : "the property identifier is empty",
                        {.element = path, .attribute = "id"});
-            return std::nullopt;
+            return {};
         }
         if (!is_property_id(id.value())) {
             log_.warning(errc::invalid_property_id, quote(id.value()) + " is not a property identifier",
@@ -268,31 +302,55 @@ private:
         if (type.empty()) {
             log_.error(errc::invalid_property, "the Property element has no type attribute",
                        {.element = path, .attribute = "type"});
-            return std::nullopt;
+            return {};
         }
         const std::optional<property_type> named = property_type_named(type.value());
         if (!named) {
             log_.error(errc::unsupported_property_type, quote(type.value()) + " is not a property type",
                        {.element = path, .attribute = "type"});
-            return std::nullopt;
+            return {};
         }
 
         const value_element element{.node = node, .path = path, .block = block, .type = *named};
+        if (values_.defers(element)) {
+            return {.deferred_id = id.value()};
+        }
         std::optional<property_value> value = values_.read(element);
         if (!value) {
-            return std::nullopt;
+            return {};
         }
         property result{.id = id.value(), .value = std::move(*value), .comment = node.attribute("comment").value()};
         // Those of an astrometric solution depend on its revision, which check_solution_types() knows.
-        if (!is_astrometric_solution_id(result.id)) {
+        if (!is_astrometric_solution_id(result.id) && !read_time_point_held_as_string(result, path)) {
             check_reserved_type(element.type, path, result.id);
         }
-        result.format = read_format(element);
-        return result;
+        // Against the type of the value read, which is TimePoint for one held as a String.
+        result.format = read_format(node, path, result.value.type());
+        return {.item = std::move(result)};
     }
 
-    // The reserved identifiers have the types of the specification (spec §11.4, §11.5.3). Another type is tolerated:
-    // PixInsight writes XISF:CreationTime as a String.
+    // A reserved TimePoint property written as a String that holds a TimePoint, as PixInsight writes
+    // XISF:CreationTime, is read as that TimePoint, which an application written against the specification expects of
+    // it, and the deviation is recorded. True when the value was replaced.
+    bool read_time_point_held_as_string(property& item, const std::string& path)
+    {
+        if (item.value.type() != property_type::string ||
+            reserved_property_type(item.id) != property_type::time_point) {
+            return false;
+        }
+        const std::optional<date_time> time = time_point_held(item.value.get<std::string>());
+        if (!time) {
+            return false;
+        }
+        log_.info(errc::reserved_property_type,
+                  "the property " + quote(item.id) +
+                      " is a TimePoint property written as a String, and is read as the TimePoint that it holds",
+                  {.element = path, .attribute = "type"});
+        item.value = property_value(*time);
+        return true;
+    }
+
+    // The reserved identifiers have the types of the specification (spec §11.4, §11.5.3). Another type is tolerated.
     void check_reserved_type(property_type type, const std::string& path, const std::string& id)
     {
         const std::optional<property_type> reserved = reserved_property_type(id);
@@ -325,14 +383,14 @@ private:
 
     // A format specifier only says how to show the value, so a malformed one is dropped (spec §8.4.3). TimePoint
     // properties have none (spec §8.4.3.1).
-    std::optional<property_format> read_format(const value_element& element)
+    std::optional<property_format> read_format(const pugi::xml_node& node, const std::string& path, property_type type)
     {
-        const pugi::xml_attribute format = element.node.attribute("format");
+        const pugi::xml_attribute format = node.attribute("format");
         if (format.empty()) {
             return std::nullopt;
         }
-        const error_context context{.element = element.path, .attribute = "format"};
-        if (element.type == property_type::time_point) {
+        const error_context context{.element = path, .attribute = "format"};
+        if (type == property_type::time_point) {
             log_.warning(errc::invalid_format_specifier,
                          "a TimePoint property has no format specifier, so it is ignored", context);
             return std::nullopt;
@@ -352,8 +410,8 @@ private:
     diagnostic_log& log_;
     // The slot of each Property element of the outline in properties_.
     std::vector<std::size_t> slots_;
-    // Each Property element as read: its property, or nothing when it is unavailable.
-    std::vector<std::optional<property>> properties_{};
+    // Each Property element as read.
+    std::vector<read_property> properties_{};
     // How many associations each property has left.
     std::vector<std::size_t> uses_{};
     // Whether the type of each property of an astrometric solution has been checked.

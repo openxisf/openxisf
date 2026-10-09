@@ -46,12 +46,12 @@ private:
 template <openxisf::pixel_sample T> std::vector<double> channel_means(const openxisf::reader& file)
 {
     const openxisf::image_info& info = file.image(0);
-    const std::size_t channels = info.geometry.channels;
     std::vector<T> samples(info.geometry.sample_count());
     file.read_pixels(0, std::span(samples),
                      {.storage = openxisf::pixel_storage::normal, .progress = progress_report()});
 
     // Interleaved: sample c of pixel p is at p × channels + c.
+    const std::size_t channels = info.geometry.channels;
     std::vector<double> sums(channels);
     for (std::size_t i = 0; i < samples.size(); ++i) {
         sums[i % channels] += static_cast<double>(samples[i]);

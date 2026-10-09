@@ -49,6 +49,14 @@ std::optional<property_value> value_reader::read(const value_element& element)
     return std::nullopt;
 }
 
+bool value_reader::defers(const value_element& element) const noexcept
+{
+    const type_category category = category_of(element.type);
+    return !load_blocks_ && element.block != nullptr && element.block->descriptor.has_value() &&
+           (category == type_category::string || category == type_category::vector ||
+            category == type_category::matrix);
+}
+
 // Scalars, complex numbers and TimePoints are written in the value attribute (spec §11.1.4, §11.1.5, §11.1.7).
 std::optional<property_value> value_reader::read_value_attribute(const value_element& element)
 {
@@ -108,6 +116,8 @@ std::optional<property_value> value_reader::read_string(const value_element& ele
     } catch (const invalid_data_error& failure) {
         log_.error(failure.code(), failure.what(), {.element = element.path});
     }
+    // The data are not kept, so they leave the limit to the blocks after them, as a block that fails to load does.
+    budget_.release(block_cost(descriptor));
     return std::nullopt;
 }
 

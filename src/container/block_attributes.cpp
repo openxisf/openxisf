@@ -6,6 +6,7 @@
 #include <openxisf/error.h>
 
 #include "core/data_encoding.h"
+#include "core/hex.h"
 #include "core/quote.h"
 #include "core/text_grammar.h"
 
@@ -219,6 +220,16 @@ block_checksum parse_checksum(std::string_view text)
     return {.algorithm = *algorithm, .digest = decode_hex(digest)};
 }
 
+bool is_checksum_algorithm_name(std::string_view name) noexcept
+{
+    return algorithm_named(name).has_value();
+}
+
+bool is_codec_name(std::string_view name) noexcept
+{
+    return codec_named(name).has_value();
+}
+
 block_compression parse_compression(std::string_view text)
 {
     const std::vector<std::string_view> parts = split(text, ':');
@@ -275,12 +286,7 @@ std::string format_attachment(std::uint64_t position, std::uint64_t size)
 
 std::string format_index_id(std::uint64_t id)
 {
-    constexpr std::string_view hex_digits = "0123456789abcdef";
-    std::string text = "0x";
-    for (int shift = 60; shift >= 0; shift -= 4) {
-        text += hex_digits[(id >> static_cast<unsigned>(shift)) & 0xFU];
-    }
-    return text;
+    return "0x" + fixed_width_hex(id);
 }
 
 std::string format_relative_location(std::string_view path, std::uint64_t id)

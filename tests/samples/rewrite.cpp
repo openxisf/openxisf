@@ -3,6 +3,9 @@
 
 // Every sample written by PixInsight, read, written again by the writer, and read back: what the reader returns is a
 // model that the writer accepts as it is, and the unit written from it holds the same images, properties and pixels.
+// That holds for a unit read without warnings, as the samples are, unless it lists an image again or holds a TimePoint
+// beyond the years 0 to 9999 in UTC (writer.h). A warning may come with something that the reader keeps and the writer
+// refuses, such as a blank FITS keyword, which the caller drops before writing the model again.
 
 #include <openxisf/color.h>
 #include <openxisf/image.h>
@@ -18,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -89,6 +93,7 @@ TEST_P(samples_rewrite, reads_back_as_written_by_pixinsight)
             EXPECT_EQ(unit.read_pixels(i), pixels[i]) << "image " << i;
         }
         EXPECT_EQ(unit.properties(), original.properties());
+        EXPECT_TRUE(std::ranges::equal(unit.tables(), original.tables()));
         for (const openxisf::property& item : original.metadata()) {
             if (!item.id.starts_with("XISF:Creat") && item.id != "XISF:BlockAlignmentSize" &&
                 item.id != "XISF:MaxInlineBlockSize" && !item.id.starts_with("XISF:Compression") &&

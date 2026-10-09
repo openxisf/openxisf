@@ -31,8 +31,11 @@ namespace openxisf::detail {
 void read_pixels(const unit& opened, std::size_t index, std::span<std::byte> destination,
                  const pixel_read_options& options, std::size_t piece_size = default_piece_size);
 
-/// The number of samples of the image at index, for a typed read. Throws usage_error when the image has another sample
-/// format, and limit_error with errc::allocation_too_large when its pixel data are larger than limits.max_allocation.
+/// The image at index, for a typed read. Throws usage_error when there is none, or when it has another sample format.
+[[nodiscard]] const image_info& typed_image_at(const unit& opened, std::size_t index, sample_format format);
+
+/// The number of samples of the image at index, for a typed read that allocates them. Throws what typed_image_at()
+/// throws, and limit_error with errc::allocation_too_large when its pixel data are larger than limits.max_allocation.
 [[nodiscard]] std::size_t typed_sample_count(const unit& opened, std::size_t index, sample_format format);
 
 } // namespace openxisf::detail

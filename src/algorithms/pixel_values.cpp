@@ -22,8 +22,11 @@ bounds checked_range(const image_info& image, std::size_t pixel_bytes, std::stri
     if (!range) {
         throw usage_error(errc::invalid_argument, prefix + " needs the bounds of a floating point image");
     }
-    if (!std::isfinite(range->lower) || !std::isfinite(range->upper) || range->lower >= range->upper) {
-        throw usage_error(errc::invalid_argument, prefix + " needs bounds that are finite and in increasing order");
+    // Equation [4] divides by the width of the range, which two finite bounds far apart, such as ±1e308, overflow.
+    if (!std::isfinite(range->lower) || !std::isfinite(range->upper) || range->lower >= range->upper ||
+        !std::isfinite(range->upper - range->lower)) {
+        throw usage_error(errc::invalid_argument,
+                          prefix + " needs bounds that are finite and in increasing order, with a finite width");
     }
     if (image.data_size() != pixel_bytes) {
         throw usage_error(errc::invalid_argument, prefix + " needs pixel data of " + std::to_string(image.data_size()) +

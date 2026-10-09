@@ -3,7 +3,7 @@
 
 #include "xml/namespaces.h"
 
-#include <ranges>
+#include <cstddef>
 
 namespace openxisf::detail {
 
@@ -25,15 +25,21 @@ std::string_view local_name(std::string_view name) noexcept
 void namespace_scope::enter(const pugi::xml_node& element)
 {
     marks_.push_back(bindings_.size());
+    const auto declare = [this](std::string_view prefix, std::string_view uri) {
+        const auto innermost = innermost_.find(prefix);
+        const std::size_t hidden = innermost == innermost_.end() ? no_binding : innermost->second;
+        bindings_.push_back({.prefix = prefix, .uri = uri, .hidden = hidden});
+        innermost_[prefix] = bindings_.size() - 1;
+    };
     for (const pugi::xml_attribute& attribute : element.attributes()) {
         const std::string_view name = attribute.name();
         const std::string_view uri = attribute.value();
         if (name == "xmlns") {
             // An empty value takes the default namespace out of scope.
-            bindings_.push_back({.prefix = {}, .uri = uri});
+            declare({}, uri);
         } else if (name.starts_with(declaration_prefix) && !uri.empty()) {
             // A prefix cannot be undeclared in XML 1.0, so an empty value declares nothing.
-            bindings_.push_back({.prefix = name.substr(declaration_prefix.size()), .uri = uri});
+            declare(name.substr(declaration_prefix.size()), uri);
         }
     }
 }
@@ -41,6 +47,12 @@ void namespace_scope::enter(const pugi::xml_node& element)
 void namespace_scope::leave() noexcept
 {
     while (bindings_.size() > marks_.back()) {
+        const binding& last = bindings_.back();
+        if (last.hidden == no_binding) {
+            innermost_.erase(last.prefix);
+        } else {
+            innermost_.find(last.prefix)->second = last.hidden;
+        }
         bindings_.pop_back();
     }
     marks_.pop_back();
@@ -53,10 +65,8 @@ std::optional<std::string_view> namespace_scope::namespace_of(std::string_view n
     if (prefix == "xml") {
         return xml_namespace;
     }
-    for (const binding& declared : std::views::reverse(bindings_)) {
-        if (declared.prefix == prefix) {
-            return declared.uri;
-        }
+    if (const auto found = innermost_.find(prefix); found != innermost_.end()) {
+        return bindings_[found->second].uri;
     }
     if (prefix.empty()) {
         return std::string_view();

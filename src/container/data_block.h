@@ -50,8 +50,10 @@ struct data_block
     std::string path{};
     /// How the block is stored, when it is available.
     std::optional<block_descriptor> descriptor{};
-    /// Why the block is unavailable, when it is not: the error diagnostic recorded when the unit was opened.
+    /// Why the block is unavailable, when it is not: the error diagnostic recorded when the unit was opened, and the
+    /// class of the exception of the resolver or source that failed, which a read of the block throws again.
     std::optional<diagnostic> problem{};
+    error_origin origin{};
 };
 
 /// What the rules for data blocks need to know about the unit.
@@ -62,6 +64,8 @@ struct block_context
     std::uint64_t header_end = 0;
     /// The size of the source, where attached blocks must end.
     std::uint64_t source_size = 0;
+    /// True when the unit has an XML signature (spec §9.5).
+    bool signed_unit = false;
 };
 
 /// The data blocks of a unit, in document order: one for each Image, Thumbnail, Property, ICCProfile or Cell element of
@@ -74,7 +78,8 @@ struct block_context
 /// - Base64 data without padding, uppercase hexadecimal digits, an empty block other than an inline one, a byteOrder
 ///   attribute on an ICCProfile element, an inline block of an Image or Thumbnail element, child elements of another
 ///   element with an inline block, block attributes of an embedded block on the element instead of its Data element,
-///   and block attributes or Data elements that have no block to describe are warnings.
+///   and block attributes or Data elements that have no block to describe are warnings, and so is an attached or
+///   external block of a signed unit without a checksum (spec §10.5).
 ///
 /// An external block of a header file is described without its file, its place in the file, and the check of its
 /// subblocks, which locate_external_blocks() adds.

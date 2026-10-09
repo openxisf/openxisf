@@ -12,6 +12,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace openxisf::detail {
 
@@ -204,6 +206,21 @@ std::optional<property_type> reserved_property_type(std::string_view id) noexcep
         }
     }
     return find_in(reserved_properties, id);
+}
+
+std::vector<std::pair<std::string, property_type>> reserved_property_types()
+{
+    std::vector<std::pair<std::string, property_type>> all;
+    all.reserve(reserved_properties.size() + (distortion_model_prefixes.size() * distortion_model_properties.size()));
+    for (const reserved_property& entry : reserved_properties) {
+        all.emplace_back(entry.id, entry.type);
+    }
+    for (const std::string_view prefix : distortion_model_prefixes) {
+        for (const reserved_property& entry : distortion_model_properties) {
+            all.emplace_back(std::string(prefix) + std::string(entry.id), entry.type);
+        }
+    }
+    return all;
 }
 
 bool is_metadata_id(std::string_view id) noexcept

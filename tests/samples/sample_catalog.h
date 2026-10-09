@@ -48,10 +48,10 @@ struct sample
 [[nodiscard]] const sample& sample_by_id(std::string_view id);
 
 /// The path of the XISF:CreationTime property in every sample, which PixInsight writes as a String rather than as the
-/// TimePoint of spec §11.4.1, so that each sample has a warning about it.
+/// TimePoint of spec §11.4.1, so that each sample has an info diagnostic about it.
 inline constexpr std::string_view creation_time_path = "/xisf/Metadata[1]/Property[1]";
 
-/// The diagnostics of a sample, without the warning that every sample has about the type of its XISF:CreationTime.
+/// The diagnostics of a sample, without the info that every sample has about the type of its XISF:CreationTime.
 [[nodiscard]] std::vector<diagnostic> unexpected_diagnostics(std::span<const diagnostic> diagnostics);
 
 /// The UTF-8 path of the file of a sample.
